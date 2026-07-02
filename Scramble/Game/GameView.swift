@@ -1,5 +1,5 @@
 import SwiftUI
-import SpriteKit
+import SceneKit
 
 struct GameView: View {
     let onExit: () -> Void
@@ -7,7 +7,7 @@ struct GameView: View {
     @EnvironmentObject private var app: AppState
     @StateObject private var engine: MatchEngine
     @StateObject private var meter = SwingMeterModel()
-    @State private var scene: CourseScene
+    @State private var scene: Course3DScene
     @State private var showShare = false
     @State private var pendingPuttStartFt = 0
     @State private var coinsApplied = false
@@ -15,14 +15,14 @@ struct GameView: View {
     init(config: MatchConfig, onExit: @escaping () -> Void) {
         self.onExit = onExit
         _engine = StateObject(wrappedValue: MatchEngine(config: config))
-        _scene = State(initialValue: CourseScene(hole: config.hole))
+        _scene = State(initialValue: Course3DScene(hole: config.hole))
     }
 
     var body: some View {
         ZStack {
             Palette.ink.ignoresSafeArea()
 
-            SpriteView(scene: scene, preferredFramesPerSecond: 60)
+            SceneView(scene: scene.scene, pointOfView: scene.cameraNode, options: [])
                 .ignoresSafeArea()
 
             VStack {
@@ -31,16 +31,21 @@ struct GameView: View {
                 if engine.phase == .aiming { bottomBar }
             }
 
-            // Flick input for chips & putts
+            // Elastic pull-and-flick input for chips & putts
             if engine.phase == .aiming, isFlickShot {
-                FlickOverlay(
+                ElasticGestureOverlay(
                     isPutt: engine.currentKind == .putt,
-                    onDrag: { dir, power in
-                        scene.showPreview(from: engine.currentSpot, direction: dir,
-                                          power: power,
+                    label: { power in flickLabel(power: power) },
+                    onDrag: { s, c in
+                        scene.showPreview(from: engine.currentSpot,
+                                          direction: worldDirection(start: s, current: c),
+                                          power: ElasticGestureOverlay.power(s, c),
                                           isPutt: engine.currentKind == .putt)
                     },
-                    onRelease: { dir, power in executeFlick(dir: dir, power: power) },
+                    onRelease: { s, c in
+                        executeFlick(dir: worldDirection(start: s, current: c),
+                                     power: ElasticGestureOverlay.power(s, c))
+                    },
                     onCancel: { scene.removePreview() }
                 )
             }
@@ -75,6 +80,7 @@ struct GameView: View {
         }
         .statusBarHidden()
         .onAppear(perform: wire)
+        .onDisappear { scene.tearDown() }
         .onChange(of: engine.phase) { _, newPhase in handlePhaseChange(newPhase) }
         .sheet(isPresented: $showShare) {
             ShareSheet(text: shareText)
@@ -186,7 +192,14 @@ struct GameView: View {
     // MARK: - Wiring
 
     private func wire() {
-        scene.placeBall(at: engine.currentSpot)
+        // "-demoPutt" drops the ball on the green — simulator checks only.
+        if CommandLine.arguments.contains("-demoPutt") {
+            engine.teamSpot[0] = engine.hole.pin + CGVector(dx: -14, dy: -34)
+            engine.teamLie[0] = .green
+        }
+        scene.placeBall(at: engine.currentSpot, onTee: engine.currentLie == .tee)
+        scene.aim(spot: engine.currentSpot, aimDir: engine.aimDirection,
+                  kind: engine.currentKind, animated: false)
 
         meter.onCommit = { power, earlyLate in
             executeMeterShot(power: power, earlyLate: earlyLate)
@@ -218,7 +231,31 @@ struct GameView: View {
             scene.addMarker(at: first.endPoint,
                             teamColorHex: engine.teams[first.teamIndex].colorHex)
         }
-        scene.placeBall(at: engine.currentSpot)
+        scene.placeBall(at: engine.currentSpot, onTee: engine.currentLie == .tee)
+        scene.aim(spot: engine.currentSpot, aimDir: engine.aimDirection,
+                  kind: engine.currentKind, animated: true)
+    }
+
+    // MARK: - Gesture → world mapping
+
+    /// Convert a screen-space pull into a 2D hole-coords direction relative
+    /// to the chase camera: screen-up fires along the aim line, screen-right
+    /// fires to the aim line's right. The shot goes opposite the pull.
+    private func worldDirection(start: CGPoint, current: CGPoint) -> CGVector {
+        let forwardAmount = current.y - start.y      // pull down = fire forward
+        let rightAmount = start.x - current.x        // pull left = fire right
+        let aimU = engine.aimDirection
+        return (aimU * forwardAmount
+                + aimU.perpendicularRight * rightAmount).normalized
+    }
+
+    private func flickLabel(power: Double) -> String {
+        if engine.currentKind == .putt {
+            // Projected roll: v0/k in points, 2 pts = 1 yd, 3 ft = 1 yd.
+            let feet = Int(power * 480 / 1.9 / 2 * 3)
+            return "\(feet) ft"
+        }
+        return "\(Int(power * Club.wedge.maxYards)) yds"
     }
 
     // MARK: - Shot execution

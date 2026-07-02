@@ -23,6 +23,66 @@ shot generates a trash-talk message to share into the chat.
 - Trash-talk share sheet after every shot and at hole end
 - Haptics on power lock, accuracy lock, mishits, holed putts
 
+## v0.2 direction — first on-device playtest feedback (2026-07-01)
+
+JJ played v0.1 on a real iPhone. Verdict: core meter is fun, everything else
+needs to change. This supersedes parts of the notes below.
+
+- **Go 3D, third-person behind the ball.** The 2D top-down view killed it —
+  "super weird to actually play." Camera sits low behind your cartoon
+  golfer: see the character, gauge the wind, then swing.
+- **Art direction (RESOLVED 2026-07-01): "indie golf game" — halfway
+  between Super Battle Golf and a real golf sim.** The cartoon lives in the
+  CHARACTERS: chunky proportions, customization, personality (Super Battle
+  Golf energy, dialed back from over-the-top). The COURSE stays grounded:
+  naturalistic stylized 3D, earthy greens, believable hole proportions,
+  soft/golden-hour light — the original muted palette in `Theme.swift`
+  carries into 3D. No neon, no arcade saturation. Restrained-animation
+  rules from v0.1 still apply.
+- **Keep the two-tap swing meter** — driver and irons "felt satisfying."
+  Polish its look, and run it WHILE the character takes their backswing so
+  meter timing and animation read as one motion.
+- **Chipping and putting were not playable in 2D.** Rework both around the
+  behind-the-ball camera (reading the green from behind your avatar).
+- **Flick gesture misread.** Intended feel: pull finger back slightly, then
+  flick UP; the flick expresses intended strength. Current
+  pull-back-and-drag mechanic "lost in translation."
+- **This is an iMessage game, not a standalone app.** Target experience:
+  take your swing at work, put the phone away, partner swings later,
+  trash talk lands in the group chat. Async turn-based via an iMessage
+  extension (MSMessagesAppViewController + MSSession) is the end state;
+  pass-and-play remains the feel-testing harness for now.
+- JJ is supplying reference images for avatar look behind the ball and
+  behind putts, drawn from Super Battle Golf's art style.
+
+## v0.2 progress — 3D milestone SHIPPED to working tree (2026-07-01)
+
+The SpriteKit top-down renderer is replaced. What's in:
+
+- `Scramble/Game3D/Course3DScene.swift` — SceneKit scene: chase camera
+  behind the ball, banded golden-hour sky, fog, warm directional light with
+  shadows, painted ground plane (the 2D hole map rendered to a texture, so
+  visuals match `Hole.lie(at:)` exactly), primitive-built trees, pin/cup,
+  and a chunky primitive golfer (the captain: cream polo, brick backwards
+  cap). ALL gameplay simulation still runs in 2D hole coords — flight path,
+  putt friction (1.9), slope drift, lip-outs are byte-identical to v0.1;
+  the 3D layer only renders those coords (mapping: world = (x, h, -y)).
+- `Scramble/Game3D/ElasticGestureOverlay.swift` — the v2 card-free gesture:
+  thumb ring, taut band with tension ticks, floating ft/yds pill, in-scene
+  ghost dots along the line. Screen pull is converted to a world direction
+  relative to the chase camera in `GameView.worldDirection`.
+- `GameView` now hosts `SceneView` + the new overlay; meter flow, banners,
+  pick-ball, wagering, share sheet all unchanged.
+- Camera framing per shot kind (back/height/aside) lives in
+  `Course3DScene.aim` — tuned via simulator screenshots.
+- Debug launch args: `-demoHole` boots straight onto the tee,
+  `-demoPutt` (with it) drops the ball on the green. Used for simulator
+  screenshot checks: `xcrun simctl launch <sim> com.scramble.golf -demoHole`.
+- Legacy 2D files (`Game/CourseScene.swift`, `Game/FlickOverlay.swift`)
+  still compile but are unused — delete once 3D is validated on device.
+- Not yet done: backswing animation synced to the meter (golfer is a
+  static pose), aim control, terrain height, character variants per player.
+
 ## Key decisions
 
 - **Art direction: muted & understated, NOT bright arcade.** After seeing
@@ -58,26 +118,31 @@ Settings > General > VPN & Device Management > Trust.
 Ongoing workflow: changes get pushed to the repo, then `git pull` on the Mac
 and rebuild.
 
-## Art assets (in progress)
+## Art assets (REVISED for 3D direction)
 
-Generating with ChatGPT/Gemini. Style reference established (painterly, muted,
-soft dark-olive outlines). Assets needed, in priority order:
+The old 2D asset plan is superseded — the top-down hole backdrop (old item 4)
+is OBSOLETE with the move to 3D; don't generate it. Style target: "indie
+golf game" — cartoony characters on a grounded course (see v0.2 direction
+above).
+
+Still useful as 2D images (ChatGPT/Gemini, painterly, muted, soft
+dark-olive outlines):
 
 1. App icon (1024x1024, ball + flag on dark green, no text)
 2. Home screen hero (portrait 3:4 painterly course, golden hour)
-3. Four golfer avatars (head/shoulders, transparent background, one session
-   so they stay consistent)
-4. Top-down hole backdrop (TRUE 90-degree overhead, portrait 3:5, tee bottom /
-   green top / pond right / three bunkers)
+3. Concept art for the four golfers — now doubles as the modeling reference
+   for 3D avatars (full body, chunky proportions, one session so they stay
+   consistent)
 
-Acceptance checks: avatars must have REAL transparency (no fake checkerboard,
-no white box); the hole backdrop must be a true overhead view (reject any
-perspective tilt — visible tree trunks, angled cup, sky reflection in pond).
+New 3D needs (approach TBD — likely simple low-poly models, SceneKit):
 
-When assets are ready: add an asset catalog, wire hero + avatars into the
-SwiftUI screens, and drop the backdrop under the course geometry in
-`CourseScene`. The hole's hit-detection shapes in `Hole.one()` will need to be
-adjusted to trace whatever the backdrop art shows.
+4. Golfer character model + swing/backswing animation set
+5. Stylized course kit: tee box, fairway/rough/green materials, bunkers,
+   water, low-poly trees, flag/pin
+
+Acceptance checks: avatar concepts must have REAL transparency (no fake
+checkerboard, no white box); course materials must stay in the earthy
+`Theme.swift` palette — reject anything neon or arcade-bright.
 
 ## First thing to do once it runs
 
