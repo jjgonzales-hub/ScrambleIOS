@@ -11,7 +11,9 @@ struct ElasticGestureOverlay: View {
     /// Projected distance readout for the floating pill, e.g. "11 ft".
     let label: (Double) -> String
     var onDrag: (CGPoint, CGPoint) -> Void
-    var onRelease: (CGPoint, CGPoint) -> Void
+    /// (start, end, release velocity in pts/s) — the upward flick speed at
+    /// release is what turns a lag putt into a firm one.
+    var onRelease: (CGPoint, CGPoint, CGSize) -> Void
     var onCancel: () -> Void
 
     @State private var start: CGPoint?
@@ -88,7 +90,7 @@ struct ElasticGestureOverlay: View {
                     guard let s = start else { onCancel(); return }
                     let c = g.location
                     if Self.power(s, c) > 0.06 {
-                        onRelease(s, c)
+                        onRelease(s, c, g.velocity)
                     } else {
                         onCancel()
                     }

@@ -80,8 +80,41 @@ The SpriteKit top-down renderer is replaced. What's in:
   screenshot checks: `xcrun simctl launch <sim> com.scramble.golf -demoHole`.
 - Legacy 2D files (`Game/CourseScene.swift`, `Game/FlickOverlay.swift`)
   still compile but are unused — delete once 3D is validated on device.
-- Not yet done: backswing animation synced to the meter (golfer is a
-  static pose), aim control, terrain height, character variants per player.
+- Not yet done: aim control, terrain height, character variants per player.
+
+### Animation + sound + polish pass (2026-07-01, same day)
+
+- **Swing animation synced to the meter.** The golfer's arms + club live in
+  a `swingNode` pivoted at the shoulders; while the power bar rises the
+  backswing tracks it in real time (`swingPoseProvider` polled per frame,
+  eased), holds at the top through the accuracy sweep, then
+  `swingRelease(impact:)` plays downswing → impact (ball launches HERE, not
+  at the tap) → follow-through → settle.
+- **Putt/chip pull-and-flick now reads the flick.** The putter mirrors the
+  finger during the drag (`setPullback`); on release, DragGesture's
+  velocity decides firmness: power = pull × (0.55 + 0.9 × flickNorm),
+  flickNorm = upwardSpeed/2600. No flick = soft lag at ~55% of the preview
+  line; full snap plays ~40% past it. `strokeRelease(power:impact:)`
+  animates the stroke, ball moves at contact.
+- **Club swap**: driver model for meter shots/chips, upright flat-blade
+  putter on the green (toggled in `Course3DScene.aim`).
+- **Meter redesigned**: frosted capsule track, hairline ticks (25/50/75),
+  flat accent fill, sweet-spot band, locked-power notch, perfect-window
+  band + pill sweep marker that flares on-center, single big power number.
+  Only appears once SWING is tapped (spring transition).
+- **Sound effects** — all procedurally synthesized, no external assets:
+  `tools/gen_sounds.py` writes the WAVs into `Scramble/Sounds/`
+  (hit_driver/iron/chip/putt, mishit, whoosh, cup_drop, splash, ui_lock,
+  pure_chime). `Core/SoundFX.swift` plays them via AVAudioPlayer, ambient
+  session (never interrupts the player's music, respects silent switch).
+  Hooks: power-lock tick, downswing whoosh, per-club impact, mishit thud,
+  chime on PURE and holed putts, cup rattle, splash.
+- **Scene polish**: grass speckle grain in the ground texture (skips
+  sand/water), waving flag cloth, glossy ball (blinn), golfer blob shadow,
+  cleaner bottom bar (lie pill, capsule SWING button, no emoji soup).
+- Verified in simulator via `-demoSwing` (auto-plays a full meter swing):
+  backswing-at-85 frame, follow-through frame, PURE 248-yd banner, putter
+  on green.
 
 ## Key decisions
 

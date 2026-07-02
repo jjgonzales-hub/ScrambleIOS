@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// MLB The Show-style two-tap meter. The fill rises automatically; tap once
-/// to lock power (light haptic), then a diamond sweeps up the bar — tap again
-/// at the center notch to lock accuracy (heavy haptic). Early = hook,
+/// to lock power (light haptic), then a marker sweeps up the bar — tap again
+/// at the center line to lock accuracy (heavy haptic). Early = hook,
 /// late = slice, way off = topped/fat.
 final class SwingMeterModel: ObservableObject {
     enum Phase: Equatable { case idle, power, accuracy, done }
@@ -61,6 +61,7 @@ final class SwingMeterModel: ObservableObject {
         case .power:
             lockedPower = max(powerValue(at: now), 0.05)
             Haptics.powerLock()
+            SoundFX.play("ui_lock", volume: 0.55)
             phase = .accuracy
             phaseStart = now
             let work = DispatchWorkItem { [weak self] in self?.commit(sweep: 1) }
@@ -87,60 +88,79 @@ final class SwingMeterModel: ObservableObject {
     }
 }
 
+/// Sleek vertical meter: frosted capsule track, hairline ticks, flat accent
+/// fill, sweet-spot band at the top, and a pill marker for the accuracy
+/// sweep. No chrome, no chatter — one number and the bar.
 struct SwingMeterView: View {
     @ObservedObject var model: SwingMeterModel
 
-    private let barHeight: CGFloat = 320
-    private let barWidth: CGFloat = 46
+    private let barHeight: CGFloat = 300
+    private let barWidth: CGFloat = 34
 
     var body: some View {
         TimelineView(.animation) { timeline in
             let power = model.powerValue(at: timeline.date)
             let accuracy = model.accuracyPosition(at: timeline.date)
 
-            VStack(spacing: 10) {
-                readout(power: power)
+            VStack(spacing: 8) {
+                Text("\(Int(power * 100))")
+                    .font(.system(size: 22, weight: .heavy, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(power > 0.94 ? Palette.danger : Palette.cream)
+                    .frame(height: 24)
 
                 ZStack(alignment: .bottom) {
-                    // Track
-                    RoundedRectangle(cornerRadius: 14)
-                        .fill(Palette.card)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 14)
-                                .stroke(Palette.accent.opacity(0.7), lineWidth: 2.5)
-                        )
+                    // Frosted track
+                    Capsule()
+                        .fill(.ultraThinMaterial)
+                    Capsule()
+                        .fill(Palette.ink.opacity(0.35))
+                    Capsule()
+                        .strokeBorder(Palette.cream.opacity(0.35), lineWidth: 1)
 
-                    // Sweet-spot band near the top (96%+ = distance bonus)
-                    Rectangle()
-                        .fill(Palette.accent.opacity(0.35))
-                        .frame(width: barWidth - 8, height: barHeight * 0.06)
+                    // Hairline ticks at 25/50/75
+                    ForEach([0.25, 0.5, 0.75], id: \.self) { t in
+                        Rectangle()
+                            .fill(Palette.cream.opacity(0.3))
+                            .frame(width: 12, height: 1)
+                            .offset(y: -barHeight * t)
+                    }
+
+                    // Sweet-spot band (96%+ = flushed distance bonus)
+                    Capsule()
+                        .fill(Palette.accent.opacity(0.55))
+                        .frame(width: barWidth - 12, height: barHeight * 0.05)
                         .offset(y: -barHeight * 0.94)
 
-                    // Power fill
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(
-                            LinearGradient(
-                                colors: [Palette.fairway, Palette.sand, Palette.danger],
-                                startPoint: .bottom, endPoint: .top
-                            )
-                        )
-                        .frame(width: barWidth - 10,
-                               height: max(barHeight * CGFloat(power), 8))
+                    // Power fill — flat accent, inset
+                    Capsule()
+                        .fill(Palette.accent.opacity(model.phase == .power ? 1 : 0.55))
+                        .frame(width: barWidth - 12,
+                               height: max(barHeight * CGFloat(power) - 10, 12))
                         .padding(.bottom, 5)
 
-                    // Accuracy center notch
+                    // Locked-power notch
+                    if model.phase == .accuracy || model.phase == .done {
+                        Capsule()
+                            .fill(Palette.cream)
+                            .frame(width: barWidth + 10, height: 3)
+                            .offset(y: -barHeight * CGFloat(model.lockedPower))
+                    }
+
+                    // Accuracy: perfect window + center line + sweep marker
                     if model.phase == .accuracy || model.phase == .done {
                         Rectangle()
-                            .fill(Palette.cream)
-                            .frame(width: barWidth + 14, height: 3)
-                            .offset(y: -barHeight / 2)
+                            .fill(Palette.cream.opacity(0.14))
+                            .frame(width: barWidth - 4, height: barHeight * 0.1)
+                            .offset(y: -barHeight * 0.45)
 
-                        // Sweeping diamond
-                        Image(systemName: "diamond.fill")
-                            .font(.system(size: 18))
-                            .foregroundStyle(diamondColor(accuracy))
-                            .offset(x: 0, y: -barHeight * CGFloat(accuracy))
-                            .shadow(color: .black.opacity(0.5), radius: 2)
+                        Capsule()
+                            .fill(Palette.cream)
+                            .frame(width: barWidth + 16, height: 2.5)
+                            .offset(y: -barHeight * 0.5)
+
+                        marker(accuracy)
+                            .offset(y: -barHeight * CGFloat(accuracy))
                     }
                 }
                 .frame(width: barWidth, height: barHeight)
@@ -148,40 +168,11 @@ struct SwingMeterView: View {
         }
     }
 
-    private func readout(power: Double) -> some View {
-        VStack(spacing: 2) {
-            switch model.phase {
-            case .power:
-                Text("PWR \(Int(power * 100))%")
-                    .font(.system(.callout, design: .rounded).bold())
-                    .foregroundStyle(Palette.accent)
-                Text("TAP!")
-                    .font(.system(.caption2, design: .rounded).bold())
-                    .foregroundStyle(Palette.cream.opacity(0.7))
-            case .accuracy:
-                Text("PWR \(Int(model.lockedPower * 100))%")
-                    .font(.system(.callout, design: .rounded).bold())
-                    .foregroundStyle(Palette.cream)
-                Text("NOW THE LINE…")
-                    .font(.system(.caption2, design: .rounded).bold())
-                    .foregroundStyle(Palette.accent)
-            case .done:
-                let acc = Int((1 - abs(model.lockedEarlyLate ?? 0)) * 100)
-                Text("PWR \(Int(model.lockedPower * 100))%")
-                    .font(.system(.callout, design: .rounded).bold())
-                    .foregroundStyle(Palette.cream)
-                Text("ACC \(acc)%")
-                    .font(.system(.callout, design: .rounded).bold())
-                    .foregroundStyle(acc >= 95 ? Palette.fairway : Palette.accent)
-            case .idle:
-                Text(" ")
-                    .font(.system(.callout, design: .rounded).bold())
-            }
-        }
-        .frame(height: 40)
-    }
-
-    private func diamondColor(_ position: Double) -> Color {
-        abs(position - 0.5) < 0.05 ? Palette.fairway : Palette.cream
+    private func marker(_ position: Double) -> some View {
+        let hot = abs(position - 0.5) < 0.05
+        return Capsule()
+            .fill(hot ? Palette.accent : Palette.cream)
+            .frame(width: hot ? 30 : 24, height: 9)
+            .overlay(Capsule().strokeBorder(Palette.ink.opacity(0.6), lineWidth: 1.5))
     }
 }

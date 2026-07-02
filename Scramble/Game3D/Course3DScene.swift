@@ -22,11 +22,26 @@ final class Course3DScene: NSObject {
     private let ballNode = SCNNode(geometry: SCNSphere(radius: 1.1))
     private let ballBlobShadow: SCNNode
     private let golferNode = SCNNode()
+    private let swingNode = SCNNode()
+    private let driverClub = SCNNode()
+    private let putterClub = SCNNode()
     private let previewRoot = SCNNode()
     private let flagNode = SCNNode()
     private let teeNode: SCNNode
     private let focusNode = SCNNode()
     private var markerNodes: [SCNNode] = []
+
+    // MARK: - Swing animation state
+
+    /// Meter power 0…1 → backswing angle, polled every frame while aiming.
+    var swingPoseProvider: (() -> CGFloat)?
+    /// Putt/chip pull-back 0…1 — overrides the provider while dragging.
+    private var manualPullback: CGFloat?
+    /// True while a release animation owns the swing node.
+    private var isSwinging = false
+
+    private static let backswingMax: CGFloat = 2.05    // rad, full meter
+    private static let pullbackMax: CGFloat = 0.5      // rad, full drag
 
     // MARK: - Simulation state (2D hole coords, main thread only)
 
@@ -160,8 +175,13 @@ final class Course3DScene: NSObject {
         buildPinAndCup()
         buildGolfer()
 
-        // Ball
-        ballNode.geometry?.firstMaterial = Course3DScene.material(0xF0EDE0)
+        // Ball — slight gloss so it reads as a ball, not a blob
+        let ballMat = SCNMaterial()
+        ballMat.diffuse.contents = UIColor(hex: 0xF0EDE0)
+        ballMat.lightingModel = .blinn
+        ballMat.specular.contents = UIColor(white: 1, alpha: 0.4)
+        ballMat.shininess = 14
+        ballNode.geometry?.firstMaterial = ballMat
         scene.rootNode.addChildNode(ballNode)
         scene.rootNode.addChildNode(ballBlobShadow)
         scene.rootNode.addChildNode(teeNode)
@@ -221,63 +241,154 @@ final class Course3DScene: NSObject {
         pole.position.y = 10
         flagNode.addChildNode(pole)
 
+        // Cloth hangs off a pivot at the pole so it can waggle in the wind
         let clothGeo = SCNPlane(width: 7, height: 3.8)
         clothGeo.firstMaterial = Course3DScene.material(0xB5533C)
         clothGeo.firstMaterial?.isDoubleSided = true
         let cloth = SCNNode(geometry: clothGeo)
         cloth.position = SCNVector3(3.6, 17.6, 0)
-        flagNode.addChildNode(cloth)
+        let clothPivot = SCNNode()
+        clothPivot.addChildNode(cloth)
+        flagNode.addChildNode(clothPivot)
+        let sway1 = SCNAction.rotateTo(x: 0, y: 0.28, z: 0, duration: 1.7)
+        sway1.timingMode = .easeInEaseOut
+        let sway2 = SCNAction.rotateTo(x: 0, y: -0.12, z: 0, duration: 1.7)
+        sway2.timingMode = .easeInEaseOut
+        clothPivot.runAction(.repeatForever(.sequence([sway1, sway2])))
 
         flagNode.position = world(hole.pin, h: 0)
         scene.rootNode.addChildNode(flagNode)
     }
 
     /// The captain — chunky proportions, cream polo, brick backwards cap.
+    /// Arms + hands + club live inside `swingNode`, pivoted at the
+    /// shoulders, so rotating that one node around local z is the swing:
+    /// positive = backswing (club sweeps up to his right), negative =
+    /// follow-through.
     private func buildGolfer() {
         func part(_ geo: SCNGeometry, _ hex: UInt32,
-                  _ x: Float, _ y: Float, _ z: Float) -> SCNNode {
+                  _ x: Float, _ y: Float, _ z: Float,
+                  in parent: SCNNode) -> SCNNode {
             geo.firstMaterial = Course3DScene.material(hex)
             let n = SCNNode(geometry: geo)
             n.position = SCNVector3(x, y, z)
-            golferNode.addChildNode(n)
+            parent.addChildNode(n)
             return n
         }
 
+        // Soft blob shadow to ground him, like the ball's
+        let blobGeo = SCNCylinder(radius: 2.6, height: 0.05)
+        blobGeo.firstMaterial = Course3DScene.unlitMaterial(
+            UIColor.black.withAlphaComponent(0.2))
+        let blob = SCNNode(geometry: blobGeo)
+        blob.position = SCNVector3(0, 0.04, -0.3)
+        golferNode.addChildNode(blob)
+
         // Legs + shoes (front of the golfer is local -z)
-        _ = part(SCNCapsule(capRadius: 0.6, height: 3.0), 0x556070, -0.62, 1.5, 0)
-        _ = part(SCNCapsule(capRadius: 0.6, height: 3.0), 0x556070, 0.62, 1.5, 0)
-        let shoeL = part(SCNSphere(radius: 0.62), 0xEDE3CB, -0.62, 0.35, -0.25)
+        _ = part(SCNCapsule(capRadius: 0.6, height: 3.0), 0x556070, -0.62, 1.5, 0, in: golferNode)
+        _ = part(SCNCapsule(capRadius: 0.6, height: 3.0), 0x556070, 0.62, 1.5, 0, in: golferNode)
+        let shoeL = part(SCNSphere(radius: 0.62), 0xEDE3CB, -0.62, 0.35, -0.25, in: golferNode)
         shoeL.scale = SCNVector3(1, 0.55, 1.5)
-        let shoeR = part(SCNSphere(radius: 0.62), 0xEDE3CB, 0.62, 0.35, -0.25)
+        let shoeR = part(SCNSphere(radius: 0.62), 0xEDE3CB, 0.62, 0.35, -0.25, in: golferNode)
         shoeR.scale = SCNVector3(1, 0.55, 1.5)
 
         // Torso + olive band
-        _ = part(SCNCapsule(capRadius: 1.35, height: 3.8), 0xF2E8D5, 0, 4.4, 0)
-        _ = part(SCNCylinder(radius: 1.38, height: 0.55), 0x8E9B63, 0, 4.35, 0)
+        _ = part(SCNCapsule(capRadius: 1.35, height: 3.8), 0xF2E8D5, 0, 4.4, 0, in: golferNode)
+        _ = part(SCNCylinder(radius: 1.38, height: 0.55), 0x8E9B63, 0, 4.35, 0, in: golferNode)
 
-        // Arms reaching down-forward to the grip
-        let armL = part(SCNCapsule(capRadius: 0.42, height: 2.8), 0xE8B98A, -1.55, 4.2, -0.7)
-        armL.eulerAngles = SCNVector3(-0.75, 0, -0.55)
-        let armR = part(SCNCapsule(capRadius: 0.42, height: 2.8), 0xE8B98A, 1.55, 4.2, -0.7)
-        armR.eulerAngles = SCNVector3(-0.75, 0, 0.55)
-        _ = part(SCNSphere(radius: 0.52), 0xE8B98A, 0.5, 2.9, -1.6)
-
-        // Head + backwards cap + button
-        _ = part(SCNSphere(radius: 1.5), 0xE8B98A, 0, 7.3, 0)
-        let cap = part(SCNSphere(radius: 1.58), 0xB5533C, 0, 7.62, 0)
+        // Head + backwards cap + button + bill (local +z = toward camera)
+        _ = part(SCNSphere(radius: 1.5), 0xE8B98A, 0, 7.3, 0, in: golferNode)
+        let cap = part(SCNSphere(radius: 1.58), 0xB5533C, 0, 7.62, 0, in: golferNode)
         cap.scale = SCNVector3(1, 0.62, 1)
-        _ = part(SCNSphere(radius: 0.24), 0x9E4634, 0, 8.6, 0)
-        // Backwards bill pokes out behind (local +z)
-        let bill = part(SCNSphere(radius: 0.85), 0x9E4634, 0, 7.45, 1.5)
+        _ = part(SCNSphere(radius: 0.24), 0x9E4634, 0, 8.6, 0, in: golferNode)
+        let bill = part(SCNSphere(radius: 0.85), 0x9E4634, 0, 7.45, 1.5, in: golferNode)
         bill.scale = SCNVector3(1, 0.22, 1.2)
 
-        // Club angled down to the ball side
-        let shaft = part(SCNCylinder(radius: 0.14, height: 4.8), 0x8C7A5A, 1.1, 1.9, -1.9)
-        shaft.eulerAngles = SCNVector3(-0.35, 0, 0.45)
+        // ---- Swing assembly (pivot at the shoulders) ----
+        swingNode.position = SCNVector3(0, 5.3, -0.3)
+        golferNode.addChildNode(swingNode)
+
+        let armL = part(SCNCapsule(capRadius: 0.42, height: 2.8), 0xE8B98A,
+                        -1.55, -1.1, -0.4, in: swingNode)
+        armL.eulerAngles = SCNVector3(-0.75, 0, -0.55)
+        let armR = part(SCNCapsule(capRadius: 0.42, height: 2.8), 0xE8B98A,
+                        1.55, -1.1, -0.4, in: swingNode)
+        armR.eulerAngles = SCNVector3(-0.75, 0, 0.55)
+        _ = part(SCNSphere(radius: 0.52), 0xE8B98A, 0.5, -2.4, -1.3, in: swingNode)
+
+        // Driver (also used for irons/wedges)
+        swingNode.addChildNode(driverClub)
+        let dShaft = part(SCNCylinder(radius: 0.14, height: 4.8), 0x8C7A5A,
+                          1.1, -3.4, -1.6, in: driverClub)
+        dShaft.eulerAngles = SCNVector3(-0.35, 0, 0.45)
         _ = part(SCNBox(width: 0.95, height: 0.5, length: 0.4, chamferRadius: 0.12),
-                 0x55606E, 2.15, 0.35, -2.45)
+                 0x55606E, 2.15, -4.95, -2.15, in: driverClub)
+
+        // Putter — shorter, upright, flat blade
+        swingNode.addChildNode(putterClub)
+        let pShaft = part(SCNCylinder(radius: 0.12, height: 3.9), 0x8C7A5A,
+                          0.95, -3.2, -1.45, in: putterClub)
+        pShaft.eulerAngles = SCNVector3(-0.18, 0, 0.3)
+        _ = part(SCNBox(width: 1.15, height: 0.38, length: 0.3, chamferRadius: 0.1),
+                 0x55606E, 1.65, -4.95, -1.85, in: putterClub)
+        putterClub.isHidden = true
 
         scene.rootNode.addChildNode(golferNode)
+    }
+
+    // MARK: - Swing animation API
+
+    /// Mirror the putt/chip drag: the club draws back as the finger pulls.
+    /// Pass nil (cancel/release) to ease back to address.
+    func setPullback(_ amount: CGFloat?) {
+        guard !isSwinging else { return }
+        manualPullback = amount.map { min(max($0, 0), 1) }
+    }
+
+    /// Full swing from the top: fast downswing, `impact` fires the moment
+    /// the club reaches the ball, then follow-through and settle.
+    func swingRelease(impact: @escaping () -> Void) {
+        isSwinging = true
+        manualPullback = nil
+        let down = SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: 0.09)
+        down.timingMode = .easeIn
+        let through = SCNAction.rotateTo(x: 0, y: 0, z: -2.35, duration: 0.22)
+        through.timingMode = .easeOut
+        let settle = SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: 0.5)
+        settle.timingMode = .easeInEaseOut
+        swingNode.runAction(.sequence([
+            down,
+            .run { _ in DispatchQueue.main.async(execute: impact) },
+            through,
+            .wait(duration: 0.9),
+            settle,
+            .run { [weak self] _ in
+                DispatchQueue.main.async { self?.isSwinging = false }
+            }
+        ]))
+    }
+
+    /// Putt/chip stroke from wherever the pull-back left the club.
+    func strokeRelease(power: Double, impact: @escaping () -> Void) {
+        isSwinging = true
+        manualPullback = nil
+        let follow = -(0.22 + 0.5 * CGFloat(power))
+        let down = SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: 0.06)
+        down.timingMode = .easeIn
+        let through = SCNAction.rotateTo(x: 0, y: 0, z: CGFloat(follow), duration: 0.14)
+        through.timingMode = .easeOut
+        let settle = SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: 0.35)
+        settle.timingMode = .easeInEaseOut
+        swingNode.runAction(.sequence([
+            down,
+            .run { _ in DispatchQueue.main.async(execute: impact) },
+            through,
+            .wait(duration: 0.45),
+            settle,
+            .run { [weak self] _ in
+                DispatchQueue.main.async { self?.isSwinging = false }
+            }
+        ]))
     }
 
     // MARK: - Camera + golfer aiming
@@ -295,6 +406,10 @@ final class Course3DScene: NSObject {
         let camPos = world(spot + aimU * -back, h: height)
         let golfSpot = spot + aimU.perpendicularRight * aside + aimU * -0.8
         focusTarget = world(spot + aimU * ahead, h: 0)
+
+        let putting = kind == .putt
+        putterClub.isHidden = !putting
+        driverClub.isHidden = putting
 
         let apply = {
             self.cameraNode.position = camPos
@@ -431,6 +546,7 @@ final class Course3DScene: NSObject {
     // MARK: - Reactions (restrained: rings and hops, no confetti)
 
     func splash(at p: CGPoint) {
+        SoundFX.play("splash", volume: 0.8)
         ring(at: p, hex: 0xF0EDE0, delay: 0)
         ring(at: p, hex: 0xF0EDE0, delay: 0.18)
         ballNode.runAction(.fadeOut(duration: 0.25))
@@ -474,6 +590,21 @@ final class Course3DScene: NSObject {
             stepFlight(f, dt: dt)
         } else if puttActive {
             stepPutt(dt: CGFloat(dt))
+        }
+
+        // Swing pose: pull-back (putts/chips) beats the meter provider;
+        // release animations own the node while they run. Eased so the
+        // backswing tracks the rising power bar smoothly.
+        if !isSwinging {
+            let target: CGFloat
+            if let pull = manualPullback {
+                target = pull * Course3DScene.pullbackMax
+            } else {
+                target = (swingPoseProvider?() ?? 0) * Course3DScene.backswingMax
+            }
+            let z = CGFloat(swingNode.eulerAngles.z)
+            let ease = 1 - exp(-16 * dt)
+            swingNode.eulerAngles.z = Float(z + (target - z) * ease)
         }
 
         // Camera focus eases toward the ball while it moves, back to the
@@ -566,6 +697,7 @@ final class Course3DScene: NSObject {
         puttActive = false
         puttVelocity = .zero
         ballBlobShadow.opacity = 0
+        SoundFX.play("cup_drop", volume: 0.9)
         let drop = SCNAction.group([
             .move(to: world(hole.pin, h: 0.2), duration: 0.15),
             .scale(to: 0.2, duration: 0.15),
@@ -720,6 +852,26 @@ final class Course3DScene: NSObject {
             cg.fillEllipse(in: greenRect)
             cg.setStrokeColor(outline)
             cg.strokeEllipse(in: greenRect)
+
+            // Grass speckle — tiny darker/lighter flecks so the turf has
+            // grain instead of reading as flat vinyl. Skipped over sand
+            // and water so those stay clean.
+            var rng = SystemRandomNumberGenerator()
+            for _ in 0..<1600 {
+                let p = CGPoint(x: .random(in: 0..<size.width, using: &rng),
+                                y: .random(in: 0..<size.height, using: &rng))
+                switch hole.lie(at: p) {
+                case .water, .bunker: continue
+                default: break
+                }
+                let dark = Bool.random(using: &rng)
+                cg.setFillColor((dark
+                    ? UIColor(hex: 0x46603B).withAlphaComponent(0.22)
+                    : UIColor(hex: 0xB9D284).withAlphaComponent(0.18)).cgColor)
+                let r = CGFloat.random(in: 0.7...1.7, using: &rng)
+                cg.fillEllipse(in: CGRect(x: p.x - r, y: p.y - r,
+                                          width: r * 2, height: r * 2))
+            }
 
             // Slope contours on the green (perpendicular to the drift)
             cg.saveGState()
