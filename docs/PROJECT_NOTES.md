@@ -91,6 +91,32 @@ The SpriteKit top-down renderer is replaced. What's in:
   still compile but are unused — delete once 3D is validated on device.
 - Not yet done: aim control, terrain height, character variants per player.
 
+### Low-poly art execution pass (2026-07-03) — "make it not look cheap"
+
+- **Faceted low-poly terrain replaces the painted flat plane.**
+  `buildTerrain()` generates a 34×56 triangle mesh with hard per-face
+  normals and per-face vertex colors sampled from `Hole.lie(at:)` (so
+  visuals still match gameplay exactly), plus deterministic shade jitter
+  (darken-only) for the facet sparkle. `groundHeight(p)` gives the world
+  real elevation: rolling rough, calm fairway, raised flat green plateau,
+  raised tee, sunken pond + bunker dishes, edge fade to the backdrop
+  floor. Gameplay physics stay flat-2D; `world(p,h)` maps everything
+  (ball, golfer, camera, previews, grid, pin) onto the terrain.
+- **Golf Dreams-inspired look, our spin** (per the approved style board):
+  no outlines in the world, flat facets, golden-hour palette; the chunky
+  outlined character is deliberately the only "cartoon" element.
+- **Trees are low-poly**: boxy trunk + two stacked SCNPyramids (upper
+  rotated 45°), random yaw.
+- **Ball fixed to sensible scale** (r 1.1 → 0.45 units) with matching
+  tee/blob/markers/preview dots; cup visual r 2.2.
+- **Swing looks like a swing now**: composed 3-axis poses
+  (`backswingPose`/`followPose` — z arm arc + y shoulder turn + x swing
+  plane tilt) eased per-axis every frame; clubheads are parented to the
+  shafts so they can never detach.
+- Lighting rebalanced (ambient 480 / sun 820) after vertex-color switch.
+- The character itself is still primitives — real modeled/rigged avatar
+  via Blender MCP (or Meshy/Mixamo) is the next art milestone.
+
 ### Unified short game + green reading (2026-07-02, later)
 
 - ONE mechanic for every club now. Chips/putts use the same
