@@ -91,6 +91,26 @@ The SpriteKit top-down renderer is replaced. What's in:
   still compile but are unused — delete once 3D is validated on device.
 - Not yet done: aim control, terrain height, character variants per player.
 
+### Unified short game + green reading (2026-07-02, later)
+
+- ONE mechanic for every club now. Chips/putts use the same
+  pull-down-rip-up gesture via `SwingGestureOverlay` modes (.full /
+  .chip / .putt): shorter maxPull (210/180), gentler up-swipe threshold
+  (150 pt/s), putter/pullback pose mirrors the drag.
+- Short-game drift = AIM (not shape): lateral drift rotates the launch
+  line up to ~31° (`aimedDirection`, drift × 0.6) so you can play break.
+- Green reading, two layers:
+  1. `buildGreenGrid` — field of soft dots across the green that flow in
+     the slope direction (speed ∝ slope strength), visible only while
+     putting. Read the break like an AR putt line.
+  2. `showPuttPreview` — physics-true read line while pulling: integrates
+     the SAME friction+slope model as the live putt, so the dotted line
+     bends exactly as the ball will at the previewed pace. Flick strength
+     at release still scales the final pace (0.55–1.45×), so touch
+     remains skill.
+- ElasticGestureOverlay is now dormant (kept until device validation).
+- `-demoPutt` stages a mid-pull with the curved read line for screenshots.
+
 ### One-motion Golf Dreams swing (2026-07-02) — meter RETIRED
 
 - `Game3D/SwingGestureOverlay.swift`: full shots are now one continuous

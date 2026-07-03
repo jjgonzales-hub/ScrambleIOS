@@ -30,43 +30,53 @@ struct GameView: View {
                 if engine.phase == .aiming { bottomBar }
             }
 
-            // Elastic pull-and-flick input for chips & putts. The golfer's
-            // club mirrors the pull; the flick velocity at release decides
-            // how firmly the projected line is struck.
-            if engine.phase == .aiming, isFlickShot {
-                ElasticGestureOverlay(
-                    isPutt: engine.currentKind == .putt,
-                    label: { power in flickLabel(power: power) },
-                    onDrag: { s, c in
-                        let pull = ElasticGestureOverlay.power(s, c)
-                        scene.setPullback(CGFloat(pull))
-                        scene.showPreview(from: engine.currentSpot,
-                                          direction: worldDirection(start: s, current: c),
-                                          power: pull,
-                                          isPutt: engine.currentKind == .putt)
-                    },
-                    onRelease: { s, c, velocity in
-                        executeFlick(dir: worldDirection(start: s, current: c),
-                                     power: flickPower(s, c, velocity: velocity))
-                    },
-                    onCancel: {
-                        scene.setPullback(nil)
-                        scene.removePreview()
-                    }
-                )
-            }
-
-            // Golf Dreams-style one-motion swing for full shots: pull down
-            // (backswing mirrors the finger), rip up (power = length ×
-            // up-swipe speed), lateral drift = hook/slice.
-            if case .meter = engine.currentKind, engine.phase == .aiming {
-                SwingGestureOverlay(
-                    onPull: { b in scene.setBackswing(CGFloat(b)) },
-                    onSwing: { power, earlyLate in
-                        executeMeterShot(power: power, earlyLate: earlyLate)
-                    },
-                    onCancel: { scene.setBackswing(nil) }
-                )
+            // One-motion swing for every club (Golf Dreams style).
+            // Full shots: drift = shot shape (hook/slice).
+            // Chips/putts: drift = AIM, so you can play the break; the
+            // putt preview bends with the green's slope as you pull.
+            if engine.phase == .aiming {
+                switch engine.currentKind {
+                case .meter:
+                    SwingGestureOverlay(
+                        mode: .full,
+                        label: { b in "\(Int(b * 100))" },
+                        onPull: { b, _ in scene.setBackswing(CGFloat(b)) },
+                        onSwing: { b, _, shapeDrift, upSpeed in
+                            let flick = min(upSpeed / 3000, 1)
+                            let power = min(b * (0.5 + 0.65 * flick), 1)
+                            executeMeterShot(power: power, earlyLate: shapeDrift)
+                        },
+                        onCancel: { scene.setBackswing(nil) }
+                    )
+                case .chip, .putt:
+                    let isPutt = engine.currentKind == .putt
+                    SwingGestureOverlay(
+                        mode: isPutt ? .putt : .chip,
+                        label: { b in flickLabel(power: b) },
+                        onPull: { b, aimDrift in
+                            scene.setPullback(CGFloat(b))
+                            let dir = aimedDirection(drift: aimDrift)
+                            if isPutt {
+                                scene.showPuttPreview(from: engine.currentSpot,
+                                                      direction: dir, power: b)
+                            } else {
+                                scene.showPreview(from: engine.currentSpot,
+                                                  direction: dir, power: b,
+                                                  isPutt: false)
+                            }
+                        },
+                        onSwing: { b, aimDrift, _, upSpeed in
+                            let flick = min(upSpeed / 2600, 1)
+                            let power = min(max(b * (0.55 + 0.9 * flick), 0.03), 1)
+                            executeFlick(dir: aimedDirection(drift: aimDrift),
+                                         power: power)
+                        },
+                        onCancel: {
+                            scene.setPullback(nil)
+                            scene.removePreview()
+                        }
+                    )
+                }
             }
 
             if engine.phase == .shotResult, let outcome = engine.lastOutcome {
@@ -199,9 +209,16 @@ struct GameView: View {
         SoundFX.prepare()
 
         // "-demoPutt" drops the ball on the green — simulator checks only.
+        // Also stages a mid-pull with the curved read line for screenshots.
         if CommandLine.arguments.contains("-demoPutt") {
             engine.teamSpot[0] = engine.hole.pin + CGVector(dx: -14, dy: -34)
             engine.teamLie[0] = .green
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
+                scene.setPullback(0.55)
+                scene.showPuttPreview(from: engine.currentSpot,
+                                      direction: aimedDirection(drift: -0.25),
+                                      power: 0.17)
+            }
         }
         // "-demoSwing" auto-plays a full swing for simulator checks:
         // staged pull-back, then a committed 88% swing, slight fade.
@@ -252,15 +269,11 @@ struct GameView: View {
 
     // MARK: - Gesture → world mapping
 
-    /// Convert a screen-space pull into a 2D hole-coords direction relative
-    /// to the chase camera: screen-up fires along the aim line, screen-right
-    /// fires to the aim line's right. The shot goes opposite the pull.
-    private func worldDirection(start: CGPoint, current: CGPoint) -> CGVector {
-        let forwardAmount = current.y - start.y      // pull down = fire forward
-        let rightAmount = start.x - current.x        // pull left = fire right
+    /// Chip/putt aim: lateral drift steers the launch line left/right of
+    /// the pin (up to ~31° at full drift) so you can play the break.
+    private func aimedDirection(drift: Double) -> CGVector {
         let aimU = engine.aimDirection
-        return (aimU * forwardAmount
-                + aimU.perpendicularRight * rightAmount).normalized
+        return (aimU + aimU.perpendicularRight * CGFloat(drift * 0.6)).normalized
     }
 
     private func flickLabel(power: Double) -> String {
@@ -270,16 +283,6 @@ struct GameView: View {
             return "\(feet) ft"
         }
         return "\(Int(power * Club.wedge.maxYards)) yds"
-    }
-
-    /// Pull sets the line and the base pace; the upward flick speed at
-    /// release decides how firmly it's struck. No flick = a soft lag at
-    /// ~55% of the preview; a full snap plays ~40% past it.
-    private func flickPower(_ s: CGPoint, _ c: CGPoint, velocity: CGSize) -> Double {
-        let pull = ElasticGestureOverlay.power(s, c)
-        let upSpeed = max(0, -Double(velocity.height))
-        let flick = min(upSpeed / 2600, 1)
-        return min(max(pull * (0.55 + 0.9 * flick), 0.03), 1)
     }
 
     // MARK: - Shot execution

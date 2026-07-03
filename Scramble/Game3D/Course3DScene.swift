@@ -26,6 +26,7 @@ final class Course3DScene: NSObject {
     private let driverClub = SCNNode()
     private let putterClub = SCNNode()
     private let previewRoot = SCNNode()
+    private let greenGridNode = SCNNode()
     private let flagNode = SCNNode()
     private let teeNode: SCNNode
     private let focusNode = SCNNode()
@@ -176,6 +177,7 @@ final class Course3DScene: NSObject {
 
         buildTrees()
         buildPinAndCup()
+        buildGreenGrid()
         buildGolfer()
 
         // Ball — slight gloss so it reads as a ball, not a blob
@@ -261,6 +263,56 @@ final class Course3DScene: NSObject {
 
         flagNode.position = world(hole.pin, h: 0)
         scene.rootNode.addChildNode(flagNode)
+    }
+
+    /// Green read: a field of soft dots across the green that drift in the
+    /// slope direction — flow direction shows the break, flow speed shows
+    /// how strong it is. Shown only while putting.
+    private func buildGreenGrid() {
+        let slope = hole.greenSlope
+        let dir = slope.normalized
+        let strength = slope.length                       // pts/s² drift
+        let travel = dir * 9
+        let cycle = max(Double(26 / max(strength, 3)), 0.9)
+
+        var index = 0
+        for ring in stride(from: CGFloat(12), through: hole.greenRadius - 6, by: 10) {
+            let count = max(Int(ring / 4), 6)
+            for i in 0..<count {
+                let angle = CGFloat(i) / CGFloat(count) * 2 * .pi
+                    + (ring / 13) * 0.35
+                let p = CGPoint(x: hole.pin.x + cos(angle) * ring,
+                                y: hole.pin.y + sin(angle) * ring)
+                guard hole.lie(at: p) == .green,
+                      p.distance(to: hole.pin) > 10 else { continue }
+
+                let geo = SCNCylinder(radius: 0.55, height: 0.1)
+                geo.firstMaterial = Course3DScene.unlitMaterial(
+                    UIColor(hex: 0xF5EFDA).withAlphaComponent(0.55))
+                let dot = SCNNode(geometry: geo)
+                dot.position = world(p, h: 0.18)
+                dot.opacity = 0
+
+                let move = SCNAction.moveBy(x: CGFloat(travel.dx), y: 0,
+                                            z: CGFloat(-travel.dy),
+                                            duration: cycle)
+                let fades = SCNAction.sequence([
+                    .fadeOpacity(to: 0.9, duration: cycle * 0.25),
+                    .wait(duration: cycle * 0.45),
+                    .fadeOpacity(to: 0, duration: cycle * 0.3)
+                ])
+                let reset = SCNAction.moveBy(x: CGFloat(-travel.dx), y: 0,
+                                             z: CGFloat(travel.dy), duration: 0)
+                dot.runAction(.sequence([
+                    .wait(duration: Double(index % 6) * cycle / 6),
+                    .repeatForever(.sequence([.group([move, fades]), reset]))
+                ]))
+                greenGridNode.addChildNode(dot)
+                index += 1
+            }
+        }
+        greenGridNode.isHidden = true
+        scene.rootNode.addChildNode(greenGridNode)
     }
 
     /// The captain — chunky proportions, cream polo, brick backwards cap.
@@ -422,6 +474,7 @@ final class Course3DScene: NSObject {
         let putting = kind == .putt
         putterClub.isHidden = !putting
         driverClub.isHidden = putting
+        greenGridNode.isHidden = !putting
 
         let apply = {
             self.cameraNode.position = camPos
@@ -553,6 +606,44 @@ final class Course3DScene: NSObject {
 
     func removePreview() {
         previewRoot.childNodes.forEach { $0.removeFromParentNode() }
+    }
+
+    /// Physics-true putt read: integrates the SAME friction + slope model
+    /// as the live putt (minus lip-outs), so the dotted line bends exactly
+    /// the way the ball will for this pull. Flick strength at release
+    /// still scales the pace — the read is honest, the touch is yours.
+    func showPuttPreview(from: CGPoint, direction: CGVector, power: Double) {
+        removePreview()
+        var pos = from
+        var vel = direction.normalized * CGFloat(power * 480)
+        let dt: CGFloat = 1.0 / 30
+        var step = 0
+        var dotIndex = 0
+
+        while vel.length > 6, step < 260 {
+            vel = vel * CGFloat(exp(-1.9 * Double(dt)))
+            if hole.lie(at: pos) == .green {
+                vel = vel + hole.greenSlope * dt
+            } else {
+                vel = vel * CGFloat(exp(-2.6 * Double(dt)))
+            }
+            pos = pos + vel * dt
+            pos.x = min(max(pos.x, 42), hole.sceneSize.width - 42)
+            pos.y = min(max(pos.y, 42), hole.sceneSize.height - 42)
+            step += 1
+
+            if step % 3 == 0 {
+                let geo = SCNCylinder(radius: 0.7, height: 0.14)
+                geo.firstMaterial = Course3DScene.unlitMaterial(
+                    UIColor(hex: 0xEDE8D4).withAlphaComponent(
+                        max(0.9 - Double(dotIndex) * 0.02, 0.35)))
+                let dot = SCNNode(geometry: geo)
+                dot.position = world(pos, h: 0.22)
+                previewRoot.addChildNode(dot)
+                dotIndex += 1
+            }
+            if pos.distance(to: hole.pin) <= hole.cupRadius { break }
+        }
     }
 
     // MARK: - Reactions (restrained: rings and hops, no confetti)

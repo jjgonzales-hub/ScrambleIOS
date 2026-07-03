@@ -59,8 +59,12 @@ Same gesture family drives every shot: drive, punch, flop, chip, putt.
 ## Status
 
 IMPLEMENTED 2026-07-02 (`Game3D/SwingGestureOverlay.swift`) — the meter
-is retired; full shots use the one-motion swing exactly as mapped above,
-including both flaw-fixes (live % pill, dedicated putt gesture kept).
+is retired; ALL clubs use the one-motion swing (JJ asked for chips/putts
+too). Mode differences: full swing drift = shot shape (hook/slice);
+chip/putt drift = aim (rotate launch line up to ~31° to play break).
+Green reading added: flowing slope-dot grid on the green while putting +
+a physics-true curved read line during the pull (same friction/slope
+integrator as the live putt; flick strength still scales final pace).
 Tunables: `SwingGestureOverlay.maxPull` (260 pt), up-swipe cancel
 threshold (250 pt/s), flick norm (3000 pt/s), power blend
 `b * (0.5 + 0.65 * flick)`, drift-to-curve scale (130 pt = full).

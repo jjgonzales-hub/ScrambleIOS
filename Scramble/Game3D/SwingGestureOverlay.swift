@@ -1,19 +1,28 @@
 import SwiftUI
 
-/// Golf Dreams-style one-motion swing for full shots. No meter, no timing
-/// bar: pull DOWN and the golfer's backswing tracks your finger; rip UP in
-/// the same touch and he swings. Power = backswing length × up-swipe
-/// speed. Lateral drift on the way up opens or closes the face —
-/// hook/slice — so dead straight is pure.
+/// Golf Dreams-style one-motion swing — now for EVERY club. Pull DOWN and
+/// the golfer's swing (or putter) mirrors your finger; rip UP in the same
+/// touch to strike. Power = pull length × up-swipe speed.
 ///
-/// Fixes Golf Dreams' known flaw (partial power is unreadable there): a
-/// floating pill shows the backswing % live, and a faint vertical axis
-/// through the touch point makes drift visible.
+/// Lateral drift means different things by mode:
+/// - full swing: drift from the top of the backswing to release opens or
+///   closes the face — hook/slice. Dead straight is pure.
+/// - chip/putt: drift AIMS the shot left/right of the pin, so you can
+///   play the break you read on the green.
+///
+/// Fixes Golf Dreams' known flaw (partial power unreadable): a floating
+/// pill shows the live pull (% or projected ft/yds), and a faint dashed
+/// axis through the touch point makes drift visible.
 struct SwingGestureOverlay: View {
-    /// Live backswing 0…1 while pulling.
-    var onPull: (Double) -> Void
-    /// Committed swing: (power 0…1, earlyLate -1…1; negative = hook).
-    var onSwing: (Double, Double) -> Void
+    enum Mode { case full, chip, putt }
+
+    let mode: Mode
+    /// Pill text for the current pull amount 0…1.
+    let label: (Double) -> String
+    /// Live during the pull: (pull 0…1, aim drift -1…1).
+    var onPull: (Double, Double) -> Void
+    /// Committed: (pull 0…1, aim drift -1…1, shape drift -1…1, up-swipe pts/s).
+    var onSwing: (Double, Double, Double, Double) -> Void
     var onCancel: () -> Void
 
     @State private var start: CGPoint?
@@ -21,15 +30,31 @@ struct SwingGestureOverlay: View {
     @State private var deepest: CGPoint?
     @State private var peaked = false
 
-    static let maxPull: CGFloat = 260
+    private var maxPull: CGFloat {
+        switch mode {
+        case .full: return 260
+        case .chip: return 210
+        case .putt: return 180
+        }
+    }
+
+    /// A putt can be released gently; a drive needs a real rip.
+    private var minUpSpeed: Double { mode == .full ? 250 : 150 }
+
+    private var hint: String {
+        switch mode {
+        case .full: return "pull down · rip up to swing"
+        case .chip: return "pull down · flick up to chip"
+        case .putt: return "pull down · flick up · drift to aim"
+        }
+    }
 
     var body: some View {
         ZStack {
             if let s = start, let c = current {
-                // Swing axis — drift off this line is hook/slice
                 Path { p in
                     p.move(to: CGPoint(x: s.x, y: s.y - 70))
-                    p.addLine(to: CGPoint(x: s.x, y: s.y + Self.maxPull + 30))
+                    p.addLine(to: CGPoint(x: s.x, y: s.y + maxPull + 30))
                 }
                 .stroke(Palette.cream.opacity(0.35),
                         style: StrokeStyle(lineWidth: 2, lineCap: .round,
@@ -49,7 +74,7 @@ struct SwingGestureOverlay: View {
                     .frame(width: 9, height: 9)
                     .position(c)
 
-                Text("\(Int(backswing(s, deepest ?? c) * 100))")
+                Text(label(pull(s, deepest ?? c)))
                     .font(.system(.callout, design: .rounded).weight(.heavy))
                     .monospacedDigit()
                     .foregroundStyle(Palette.ink)
@@ -60,7 +85,7 @@ struct SwingGestureOverlay: View {
                         in: Capsule())
                     .position(x: c.x + 58, y: c.y - 26)
             } else {
-                Text("pull down · rip up to swing")
+                Text(hint)
                     .font(.system(.footnote, design: .rounded).bold())
                     .foregroundStyle(Palette.cream.opacity(0.6))
                     .frame(maxWidth: .infinity, maxHeight: .infinity,
@@ -82,33 +107,32 @@ struct SwingGestureOverlay: View {
                         deepest = g.location
                     }
                     guard let s = start, let d = deepest else { return }
-                    let b = backswing(s, d)
+                    let b = pull(s, d)
                     if b >= 1, !peaked {
                         peaked = true
-                        Haptics.powerLock()   // felt: you're at the top
+                        Haptics.powerLock()
                     }
-                    onPull(b)
+                    onPull(b, drift(from: s.x, to: g.location.x))
                 }
                 .onEnded { g in
                     defer { start = nil; current = nil; deepest = nil; peaked = false }
                     guard let s = start, let d = deepest else { onCancel(); return }
-                    let b = backswing(s, d)
+                    let b = pull(s, d)
                     let upSpeed = max(0, -Double(g.velocity.height))
-                    // No real up-swipe = no swing. Ease back to address.
-                    guard b > 0.08, upSpeed > 250 else { onCancel(); return }
-
-                    let flick = min(upSpeed / 3000, 1)
-                    let power = min(b * (0.5 + 0.65 * flick), 1)
-                    // Face control: lateral drift from the top of the
-                    // backswing to release. Right = slice, left = hook.
-                    let drift = Double(g.location.x - d.x)
-                    let earlyLate = min(max(drift / 130, -1), 1)
-                    onSwing(power, earlyLate)
+                    guard b > 0.08, upSpeed > minUpSpeed else { onCancel(); return }
+                    onSwing(b,
+                            drift(from: s.x, to: g.location.x),
+                            drift(from: d.x, to: g.location.x),
+                            upSpeed)
                 }
         )
     }
 
-    private func backswing(_ s: CGPoint, _ d: CGPoint) -> Double {
-        Double(min(max((d.y - s.y) / Self.maxPull, 0), 1))
+    private func pull(_ s: CGPoint, _ d: CGPoint) -> Double {
+        Double(min(max((d.y - s.y) / maxPull, 0), 1))
+    }
+
+    private func drift(from a: CGFloat, to b: CGFloat) -> Double {
+        min(max(Double((b - a) / 130), -1), 1)
     }
 }
