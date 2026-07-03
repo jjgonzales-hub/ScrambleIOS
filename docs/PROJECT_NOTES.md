@@ -1,5 +1,14 @@
 # Scramble — Project Notes & Handoff
 
+## PRODUCT VISION (locked 2026-07-02)
+
+**Scramble is a Golf Dreams clone with its own identity**: Golf Dreams'
+one-motion swing mechanics and physics feel, played as async 2v2 scramble
+over iMessage, in our muted-cartoon art style, with avatars,
+customization, trash talk, and wagers. "2v2 Scramble using the golf
+dream mechanics and a slightly different art style with avatars and
+customization is the final dream." — JJ
+
 A running record of what's been built, key decisions, and what's next. The
 full verbatim build conversation is saved alongside this file as
 `conversation-log.jsonl` (open it with a text editor, or a JSONL viewer).
@@ -81,6 +90,29 @@ The SpriteKit top-down renderer is replaced. What's in:
 - Legacy 2D files (`Game/CourseScene.swift`, `Game/FlickOverlay.swift`)
   still compile but are unused — delete once 3D is validated on device.
 - Not yet done: aim control, terrain height, character variants per player.
+
+### One-motion Golf Dreams swing (2026-07-02) — meter RETIRED
+
+- `Game3D/SwingGestureOverlay.swift`: full shots are now one continuous
+  gesture — pull DOWN (golfer's backswing mirrors the drag via
+  `Course3DScene.setBackswing`), rip UP (power = backswing length ×
+  up-swipe speed, threshold 250 pt/s or the swing cancels), lateral drift
+  from the top of the backswing to release = `earlyLate` (hook/slice) fed
+  straight into the untouched `ShotEngine.meterShot` math. ±130 pt drift
+  = full curve.
+- Anti-Golf-Dreams-flaw affordances: live backswing % pill (turns accent
+  at 100 + haptic), faint dashed swing axis so drift is visible.
+- Post-shot ratingLine now includes swing speed: "PURE • 258 YDS •
+  107 MPH" (122 mph max driver, 96 iron, scaled by power).
+- SWING button gone — touch anywhere and swing. Bottom bar is a slim
+  info row (player, lie pill, club pill, distance).
+- SwingMeterModel/View are UNUSED but kept until the gesture is validated
+  on device; `-demoSwing` now stages a scripted pull + 88% swing.
+- Putt/chip keep the dedicated elastic flick (per SWING_MECHANICS.md).
+- JJ set his signing in project.yml (com.jjgonzales.scramble, team
+  G6638MQJQA) — simulator launches use the new bundle id.
+- Blender MCP connector is installed for the upcoming real-character
+  animation work (Blender must be running with the addon started).
 
 ### Animation + sound + polish pass (2026-07-01, same day)
 

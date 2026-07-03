@@ -6,7 +6,6 @@ struct GameView: View {
 
     @EnvironmentObject private var app: AppState
     @StateObject private var engine: MatchEngine
-    @StateObject private var meter = SwingMeterModel()
     @State private var scene: Course3DScene
     @State private var showShare = false
     @State private var pendingPuttStartFt = 0
@@ -57,18 +56,17 @@ struct GameView: View {
                 )
             }
 
-            // Swing meter for full shots — appears once the swing starts
-            if case .meter = engine.currentKind, engine.phase == .aiming,
-               meter.phase != .idle {
-                HStack {
-                    Spacer()
-                    SwingMeterView(model: meter)
-                        .padding(.trailing, 16)
-                }
-                .transition(.scale(scale: 0.85).combined(with: .opacity))
-                if meter.phase == .power || meter.phase == .accuracy {
-                    TouchDownCatcher { meter.tap() }
-                }
+            // Golf Dreams-style one-motion swing for full shots: pull down
+            // (backswing mirrors the finger), rip up (power = length ×
+            // up-swipe speed), lateral drift = hook/slice.
+            if case .meter = engine.currentKind, engine.phase == .aiming {
+                SwingGestureOverlay(
+                    onPull: { b in scene.setBackswing(CGFloat(b)) },
+                    onSwing: { power, earlyLate in
+                        executeMeterShot(power: power, earlyLate: earlyLate)
+                    },
+                    onCancel: { scene.setBackswing(nil) }
+                )
             }
 
             if engine.phase == .shotResult, let outcome = engine.lastOutcome {
@@ -159,37 +157,29 @@ struct GameView: View {
     }
 
     private var bottomBar: some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 10) {
-                Text("\(engine.currentPlayer.emoji) \(engine.currentPlayer.name)")
-                    .font(.system(.headline, design: .rounded).bold())
-                    .foregroundStyle(Palette.cream)
-                Text(engine.currentLie.label.uppercased())
+        HStack(spacing: 10) {
+            Text("\(engine.currentPlayer.emoji) \(engine.currentPlayer.name)")
+                .font(.system(.headline, design: .rounded).bold())
+                .foregroundStyle(Palette.cream)
+            Text(engine.currentLie.label.uppercased())
+                .font(.system(.caption, design: .rounded).bold())
+                .foregroundStyle(Palette.cream.opacity(0.65))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Palette.ink.opacity(0.6), in: Capsule())
+            if case .meter(let club) = engine.currentKind {
+                Text(club.rawValue.uppercased())
                     .font(.system(.caption, design: .rounded).bold())
-                    .foregroundStyle(Palette.cream.opacity(0.65))
+                    .foregroundStyle(Palette.ink)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
-                    .background(Palette.ink.opacity(0.6), in: Capsule())
-                Spacer()
-                Text(distanceLabel)
-                    .font(.system(.headline, design: .rounded).bold())
-                    .monospacedDigit()
-                    .foregroundStyle(Palette.accent)
+                    .background(Palette.accent.opacity(0.9), in: Capsule())
             }
-
-            if case .meter(let club) = engine.currentKind, meter.phase == .idle {
-                Button {
-                    withAnimation(.spring(duration: 0.3)) { meter.start() }
-                } label: {
-                    Text("SWING \(club.rawValue.uppercased())")
-                        .font(.system(.headline, design: .rounded).weight(.heavy))
-                        .tracking(1.5)
-                        .foregroundStyle(Palette.ink)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 15)
-                        .background(Palette.accent, in: Capsule())
-                }
-            }
+            Spacer()
+            Text(distanceLabel)
+                .font(.system(.headline, design: .rounded).bold())
+                .monospacedDigit()
+                .foregroundStyle(Palette.accent)
         }
         .padding(16)
         .background(Palette.card.opacity(0.92), in: RoundedRectangle(cornerRadius: 22))
@@ -213,30 +203,21 @@ struct GameView: View {
             engine.teamSpot[0] = engine.hole.pin + CGVector(dx: -14, dy: -34)
             engine.teamLie[0] = .green
         }
-        // "-demoSwing" auto-plays a full meter swing for simulator checks.
+        // "-demoSwing" auto-plays a full swing for simulator checks:
+        // staged pull-back, then a committed 88% swing, slight fade.
         if CommandLine.arguments.contains("-demoSwing") {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { meter.start() }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.18) { meter.tap() }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.84) { meter.tap() }
+            for (t, b) in [(1.2, 0.3), (1.5, 0.6), (1.8, 0.9), (2.1, 1.0)] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + t) {
+                    scene.setBackswing(CGFloat(b))
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                executeMeterShot(power: 0.88, earlyLate: 0.04)
+            }
         }
         scene.placeBall(at: engine.currentSpot, onTee: engine.currentLie == .tee)
         scene.aim(spot: engine.currentSpot, aimDir: engine.aimDirection,
                   kind: engine.currentKind, animated: false)
-
-        // The golfer's backswing tracks the power bar in real time and
-        // holds at the top through the accuracy sweep.
-        scene.swingPoseProvider = { [weak meter] in
-            guard let meter else { return 0 }
-            switch meter.phase {
-            case .power: return CGFloat(meter.powerValue(at: Date()))
-            case .accuracy, .done: return CGFloat(meter.lockedPower)
-            case .idle: return 0
-            }
-        }
-
-        meter.onCommit = { power, earlyLate in
-            executeMeterShot(power: power, earlyLate: earlyLate)
-        }
 
         scene.onPuttEnded = { holed, end in
             engine.resolvePutt(holed: holed, end: end)
@@ -256,7 +237,6 @@ struct GameView: View {
             return
         }
         guard phase == .aiming else { return }
-        meter.reset()
         scene.removePreview()
         if engine.roundShots.isEmpty {
             scene.clearMarkers()
@@ -320,6 +300,7 @@ struct GameView: View {
         // just delivers it.
         SoundFX.play("whoosh", volume: 0.65)
         scene.swingRelease {
+            Haptics.accuracyLock()
             playHitSound(result: result, club: club)
             scene.animateShot(from: spot, aim: aim,
                               carryYards: result.carryYards,
@@ -386,26 +367,5 @@ struct GameView: View {
                           flavor: raw.flavor,
                           carryYards: raw.carryYards * factor,
                           lateralYards: raw.lateralYards)
-    }
-}
-
-/// Fires on touch-down (not touch-up) so meter taps feel instant.
-struct TouchDownCatcher: View {
-    let action: () -> Void
-    @State private var isDown = false
-
-    var body: some View {
-        Color.clear
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { _ in
-                        if !isDown {
-                            isDown = true
-                            action()
-                        }
-                    }
-                    .onEnded { _ in isDown = false }
-            )
     }
 }

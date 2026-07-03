@@ -106,7 +106,10 @@ final class MatchEngine: ObservableObject {
         case .meter(let club):
             message = TrashTalk.meterShot(player: playerName(), result: result,
                                           lie: lie, holeNumber: hole.number)
-            ratingLine = "\(result.rating.rawValue) • \(Int(result.carryYards)) YDS"
+            // Golf Dreams-style swing feedback: carry + swing speed.
+            let mph = Int(Double(result.powerPct) / 100
+                          * (club == .driver ? 122 : 96))
+            ratingLine = "\(result.rating.rawValue) • \(Int(result.carryYards)) YDS • \(mph) MPH"
             trackDrive(club: club, yards: result.carryYards)
         case .chip:
             message = holed

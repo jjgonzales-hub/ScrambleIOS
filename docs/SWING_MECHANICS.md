@@ -58,7 +58,13 @@ Same gesture family drives every shot: drive, punch, flop, chip, putt.
 
 ## Status
 
-Research only — NOT implemented. JJ is adding an animation connector and
-other tooling before the next build pass; character animation quality is
-the current top complaint (primitive-rig rotations judged not good
-enough; real rigged character/animations wanted).
+IMPLEMENTED 2026-07-02 (`Game3D/SwingGestureOverlay.swift`) — the meter
+is retired; full shots use the one-motion swing exactly as mapped above,
+including both flaw-fixes (live % pill, dedicated putt gesture kept).
+Tunables: `SwingGestureOverlay.maxPull` (260 pt), up-swipe cancel
+threshold (250 pt/s), flick norm (3000 pt/s), power blend
+`b * (0.5 + 0.65 * flick)`, drift-to-curve scale (130 pt = full).
+
+Character animation quality remains the top complaint (primitive-rig
+rotations judged not good enough) — real rigged character via the
+Blender MCP connector is the next art milestone.

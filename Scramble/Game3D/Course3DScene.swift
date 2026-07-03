@@ -35,7 +35,10 @@ final class Course3DScene: NSObject {
 
     /// Meter power 0…1 → backswing angle, polled every frame while aiming.
     var swingPoseProvider: (() -> CGFloat)?
-    /// Putt/chip pull-back 0…1 — overrides the provider while dragging.
+    /// Full-swing drag 0…1 (Golf Dreams-style pull) — the finger IS the
+    /// backswing. Overrides the provider while set.
+    private var manualBackswing: CGFloat?
+    /// Putt/chip pull-back 0…1 — overrides everything while dragging.
     private var manualPullback: CGFloat?
     /// True while a release animation owns the swing node.
     private var isSwinging = false
@@ -345,11 +348,19 @@ final class Course3DScene: NSObject {
         manualPullback = amount.map { min(max($0, 0), 1) }
     }
 
+    /// Mirror the full-swing pull: 0…1 maps to the whole backswing arc.
+    /// Pass nil (cancel) to ease back to address.
+    func setBackswing(_ amount: CGFloat?) {
+        guard !isSwinging else { return }
+        manualBackswing = amount.map { min(max($0, 0), 1) }
+    }
+
     /// Full swing from the top: fast downswing, `impact` fires the moment
     /// the club reaches the ball, then follow-through and settle.
     func swingRelease(impact: @escaping () -> Void) {
         isSwinging = true
         manualPullback = nil
+        manualBackswing = nil
         let down = SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: 0.09)
         down.timingMode = .easeIn
         let through = SCNAction.rotateTo(x: 0, y: 0, z: -2.35, duration: 0.22)
@@ -372,6 +383,7 @@ final class Course3DScene: NSObject {
     func strokeRelease(power: Double, impact: @escaping () -> Void) {
         isSwinging = true
         manualPullback = nil
+        manualBackswing = nil
         let follow = -(0.22 + 0.5 * CGFloat(power))
         let down = SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: 0.06)
         down.timingMode = .easeIn
@@ -599,6 +611,8 @@ final class Course3DScene: NSObject {
             let target: CGFloat
             if let pull = manualPullback {
                 target = pull * Course3DScene.pullbackMax
+            } else if let back = manualBackswing {
+                target = back * Course3DScene.backswingMax
             } else {
                 target = (swingPoseProvider?() ?? 0) * Course3DScene.backswingMax
             }
