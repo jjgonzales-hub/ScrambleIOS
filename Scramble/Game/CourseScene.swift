@@ -376,7 +376,7 @@ final class CourseScene: SKScene {
         let dir = direction.normalized
         let travel: CGFloat = isPutt
             ? CGFloat(power) * 480 / 1.9                       // v0 / k
-            : CGFloat(power * Club.wedge.maxYards) * Hole.pointsPerYard
+            : CGFloat(power * Club.sandWedge.maxYards) * Hole.pointsPerYard
 
         let dotCount = max(Int(travel / 16), 2)
         for i in 1...dotCount {

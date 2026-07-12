@@ -10,6 +10,14 @@ struct GameView: View {
     @State private var showShare = false
     @State private var pendingPuttStartFt = 0
     @State private var coinsApplied = false
+    @State private var showBag = false
+    @State private var aimOffset = 0.0
+    @State private var aimDragStart: Double?
+
+    /// Live aim line: the pin line rotated by the player's aim adjustment.
+    private var aimU: CGVector {
+        engine.aimDirection.rotated(by: CGFloat(aimOffset))
+    }
 
     init(config: MatchConfig, onExit: @escaping () -> Void) {
         self.onExit = onExit
@@ -41,10 +49,20 @@ struct GameView: View {
                         mode: .full,
                         label: { b in "\(Int(b * 100))" },
                         onPull: { b, _ in scene.setBackswing(CGFloat(b)) },
-                        onSwing: { b, _, shapeDrift, upSpeed in
-                            let flick = min(upSpeed / 3000, 1)
-                            let power = min(b * (0.5 + 0.65 * flick), 1)
-                            executeMeterShot(power: power, earlyLate: shapeDrift)
+                        onSwing: { b, aimDrift, shapeDrift, upSpeed in
+                            // Golf Dreams power model (dev-confirmed):
+                            // backswing length is the power and it's
+                            // EXPONENTIAL — margins are small. Swipe speed
+                            // is only a ±4% tempo nudge.
+                            let tempo = 0.96 + 0.08 * min(upSpeed / 2600, 1)
+                            let power = min(exp(2.3 * (b - 1)) * tempo, 1.04)
+                            // Face control from BOTH phases, like Golf
+                            // Dreams: drift going back counts at 40%,
+                            // drift through impact at full weight.
+                            let backDrift = aimDrift - shapeDrift
+                            let earlyLate = min(max(shapeDrift + 0.4 * backDrift,
+                                                    -1), 1)
+                            executeMeterShot(power: power, earlyLate: earlyLate)
                         },
                         onCancel: { scene.setBackswing(nil) }
                     )
@@ -77,6 +95,46 @@ struct GameView: View {
                         }
                     )
                 }
+            }
+
+            // Aim strip — drag horizontally across the top of the screen to
+            // rotate the aim line (Golf Dreams: pick your line against the
+            // wind). Sits above the swing overlay so it wins up here.
+            if engine.phase == .aiming {
+                VStack(spacing: 4) {
+                    Text("‹ drag to aim ›")
+                        .font(.system(.caption2, design: .rounded).bold())
+                        .foregroundStyle(Palette.cream.opacity(0.45))
+                        .padding(.top, 96)
+                    Color.clear
+                        .frame(height: 150)
+                        .contentShape(Rectangle())
+                        .gesture(
+                            DragGesture(minimumDistance: 2)
+                                .onChanged { g in
+                                    if aimDragStart == nil { aimDragStart = aimOffset }
+                                    aimOffset = min(max((aimDragStart ?? 0)
+                                        - Double(g.translation.width) * 0.0011,
+                                        -0.55), 0.55)
+                                    scene.aim(spot: engine.currentSpot, aimDir: aimU,
+                                              kind: engine.currentKind, animated: false)
+                                    if engine.currentKind == .putt {
+                                        scene.showPuttPreview(from: engine.currentSpot,
+                                                              direction: aimU, power: 0.3)
+                                    } else {
+                                        scene.showPreview(from: engine.currentSpot,
+                                                          direction: aimU, power: 0.55,
+                                                          isPutt: false)
+                                    }
+                                }
+                                .onEnded { _ in
+                                    aimDragStart = nil
+                                    scene.removePreview()
+                                }
+                        )
+                    Spacer()
+                }
+                .ignoresSafeArea()
             }
 
             if engine.phase == .shotResult, let outcome = engine.lastOutcome {
@@ -167,34 +225,91 @@ struct GameView: View {
     }
 
     private var bottomBar: some View {
-        HStack(spacing: 10) {
-            Text("\(engine.currentPlayer.emoji) \(engine.currentPlayer.name)")
-                .font(.system(.headline, design: .rounded).bold())
-                .foregroundStyle(Palette.cream)
-            Text(engine.currentLie.label.uppercased())
-                .font(.system(.caption, design: .rounded).bold())
-                .foregroundStyle(Palette.cream.opacity(0.65))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(Palette.ink.opacity(0.6), in: Capsule())
-            if case .meter(let club) = engine.currentKind {
-                Text(club.rawValue.uppercased())
+        VStack(spacing: 10) {
+            if showBag { bagRow }
+
+            HStack(spacing: 10) {
+                Text("\(engine.currentPlayer.emoji) \(engine.currentPlayer.name)")
+                    .font(.system(.headline, design: .rounded).bold())
+                    .foregroundStyle(Palette.cream)
+                Text(engine.currentLie.label.uppercased())
                     .font(.system(.caption, design: .rounded).bold())
-                    .foregroundStyle(Palette.ink)
+                    .foregroundStyle(Palette.cream.opacity(0.65))
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
-                    .background(Palette.accent.opacity(0.9), in: Capsule())
+                    .background(Palette.ink.opacity(0.6), in: Capsule())
+
+                // The bag — tap to choose a club, Golf Dreams style.
+                // Carry yardage is how you judge distance; no meter.
+                Button {
+                    withAnimation(.spring(duration: 0.25)) { showBag.toggle() }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(clubChipLabel)
+                            .font(.system(.caption, design: .rounded).bold())
+                        Image(systemName: showBag ? "chevron.down" : "chevron.up")
+                            .font(.system(size: 9, weight: .heavy))
+                    }
+                    .foregroundStyle(Palette.ink)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 4)
+                    .background(Palette.accent.opacity(0.92), in: Capsule())
+                }
+
+                Spacer()
+                Text(distanceLabel)
+                    .font(.system(.headline, design: .rounded).bold())
+                    .monospacedDigit()
+                    .foregroundStyle(Palette.accent)
             }
-            Spacer()
-            Text(distanceLabel)
-                .font(.system(.headline, design: .rounded).bold())
-                .monospacedDigit()
-                .foregroundStyle(Palette.accent)
         }
         .padding(16)
         .background(Palette.card.opacity(0.92), in: RoundedRectangle(cornerRadius: 22))
         .padding(.horizontal, 14)
         .padding(.bottom, 8)
+    }
+
+    private var clubChipLabel: String {
+        let club = engine.currentClub
+        if club == .putter { return "PUTTER" }
+        return "\(club.shortLabel) · \(Int(club.maxYards)) YD"
+    }
+
+    private var bagRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(availableClubs, id: \.self) { club in
+                    Button {
+                        engine.clubOverride = club
+                        withAnimation(.spring(duration: 0.25)) { showBag = false }
+                        scene.aim(spot: engine.currentSpot, aimDir: aimU,
+                                  kind: engine.currentKind, animated: true)
+                    } label: {
+                        VStack(spacing: 1) {
+                            Text(club.shortLabel)
+                                .font(.system(.callout, design: .rounded).weight(.heavy))
+                            Text(club == .putter ? "green" : "\(Int(club.maxYards)) yd")
+                                .font(.system(.caption2, design: .rounded).bold())
+                                .opacity(0.75)
+                        }
+                        .foregroundStyle(engine.currentClub == club
+                                         ? Palette.ink : Palette.cream)
+                        .frame(width: 62)
+                        .padding(.vertical, 7)
+                        .background(engine.currentClub == club
+                                    ? Palette.accent
+                                    : Palette.ink.opacity(0.55),
+                                    in: RoundedRectangle(cornerRadius: 12))
+                    }
+                }
+            }
+        }
+    }
+
+    private var availableClubs: [Club] {
+        engine.putterAllowed && engine.currentLie != .green
+            ? Club.bag + [.putter]
+            : Club.bag
     }
 
     private var distanceLabel: String {
@@ -233,7 +348,7 @@ struct GameView: View {
             }
         }
         scene.placeBall(at: engine.currentSpot, onTee: engine.currentLie == .tee)
-        scene.aim(spot: engine.currentSpot, aimDir: engine.aimDirection,
+        scene.aim(spot: engine.currentSpot, aimDir: aimU,
                   kind: engine.currentKind, animated: false)
 
         scene.onPuttEnded = { holed, end in
@@ -254,6 +369,8 @@ struct GameView: View {
             return
         }
         guard phase == .aiming else { return }
+        aimOffset = 0
+        showBag = false
         scene.removePreview()
         if engine.roundShots.isEmpty {
             scene.clearMarkers()
@@ -263,17 +380,16 @@ struct GameView: View {
                             teamColorHex: engine.teams[first.teamIndex].colorHex)
         }
         scene.placeBall(at: engine.currentSpot, onTee: engine.currentLie == .tee)
-        scene.aim(spot: engine.currentSpot, aimDir: engine.aimDirection,
+        scene.aim(spot: engine.currentSpot, aimDir: aimU,
                   kind: engine.currentKind, animated: true)
     }
 
     // MARK: - Gesture → world mapping
 
     /// Chip/putt aim: lateral drift steers the launch line left/right of
-    /// the pin (up to ~31° at full drift) so you can play the break.
+    /// the current aim line (up to ~31° at full drift) to play the break.
     private func aimedDirection(drift: Double) -> CGVector {
-        let aimU = engine.aimDirection
-        return (aimU + aimU.perpendicularRight * CGFloat(drift * 0.6)).normalized
+        (aimU + aimU.perpendicularRight * CGFloat(drift * 0.6)).normalized
     }
 
     private func flickLabel(power: Double) -> String {
@@ -282,7 +398,7 @@ struct GameView: View {
             let feet = Int(power * 480 / 1.9 / 2 * 3)
             return "\(feet) ft"
         }
-        return "\(Int(power * Club.wedge.maxYards)) yds"
+        return "\(Int(power * Club.sandWedge.maxYards)) yds"
     }
 
     // MARK: - Shot execution
@@ -292,10 +408,10 @@ struct GameView: View {
         let raw = ShotEngine.meterShot(club: club, power: power,
                                        earlyLate: earlyLate,
                                        wind: engine.wind,
-                                       aim: engine.aimDirection)
+                                       aim: aimU)
         let result = applyLie(raw)
         let spot = engine.currentSpot
-        let aim = engine.aimDirection
+        let aim = aimU
         engine.beginShot()
 
         // Downswing plays out, then the ball launches at the moment of
@@ -332,7 +448,7 @@ struct GameView: View {
                                   carryYards: result.carryYards,
                                   lateralYards: 0,
                                   flavor: result.flavor,
-                                  apexScale: Club.wedge.apexScale) { end, samples in
+                                  apexScale: Club.sandWedge.apexScale) { end, samples in
                     engine.resolveLanding(kind: .chip, result: result,
                                           end: end, samples: samples)
                 }

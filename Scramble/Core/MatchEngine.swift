@@ -59,14 +59,43 @@ final class MatchEngine: ObservableObject {
     var distanceToPinYards: Double { hole.distanceToPinYards(from: currentSpot) }
     var distanceToPinFeet: Int { Int(distanceToPinYards * 3) }
 
-    var currentKind: ShotKind {
-        let dist = distanceToPinYards
-        if currentLie == .green { return .putt }
-        if dist <= 60 { return .chip }
-        if dist > 210 && (currentLie == .tee || currentLie == .fairway) {
-            return .meter(.driver)
+    /// Player's club choice for this shot (nil = play the suggestion).
+    @Published var clubOverride: Club?
+
+    /// Caddie suggestion: shortest club that still reaches, given the lie.
+    var suggestedClub: Club {
+        if currentLie == .green { return .putter }
+        let d = distanceToPinYards
+        if d <= 50 { return .sandWedge }
+        let needed = d / max(currentLie.distanceFactor, 0.4)
+        for club in Club.bag.reversed() where club.maxYards >= needed * 0.97 {
+            return club
         }
-        return .meter(.iron)
+        return .driver
+    }
+
+    /// Texas wedge: putter is allowed off the green from clean short lies.
+    var putterAllowed: Bool {
+        currentLie == .green
+            || ((currentLie == .fringe || currentLie == .fairway)
+                && distanceToPinYards <= 55)
+    }
+
+    var currentClub: Club {
+        if currentLie == .green { return .putter }
+        if let pick = clubOverride {
+            if pick == .putter { return putterAllowed ? .putter : suggestedClub }
+            return pick
+        }
+        return suggestedClub
+    }
+
+    var currentKind: ShotKind {
+        switch currentClub {
+        case .putter: return .putt
+        case .sandWedge where distanceToPinYards <= 50: return .chip
+        default: return .meter(currentClub)
+        }
     }
 
     var aimDirection: CGVector {
@@ -107,8 +136,7 @@ final class MatchEngine: ObservableObject {
             message = TrashTalk.meterShot(player: playerName(), result: result,
                                           lie: lie, holeNumber: hole.number)
             // Golf Dreams-style swing feedback: carry + swing speed.
-            let mph = Int(Double(result.powerPct) / 100
-                          * (club == .driver ? 122 : 96))
+            let mph = Int(Double(result.powerPct) / 100 * club.swingMPH)
             ratingLine = "\(result.rating.rawValue) • \(Int(result.carryYards)) YDS • \(mph) MPH"
             trackDrive(club: club, yards: result.carryYards)
         case .chip:
@@ -193,6 +221,7 @@ final class MatchEngine: ObservableObject {
     /// Advance after the result banner is dismissed.
     func advanceAfterResult() {
         guard let last = lastOutcome else { return }
+        clubOverride = nil
 
         if last.holed {
             strokes[activeTeam] += 1
@@ -213,6 +242,7 @@ final class MatchEngine: ObservableObject {
 
     /// The team picks which of the two balls to play from.
     func pick(_ outcome: ShotOutcome) {
+        clubOverride = nil
         strokes[activeTeam] += 1 + (outcome.penalty ? 1 : 0)
         if outcome.penalty, let drop = outcome.dropPoint {
             teamSpot[activeTeam] = drop

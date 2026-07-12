@@ -109,7 +109,7 @@ enum ShotEngine {
     /// you swing out of your shoes.
     /// Returns carry in yards and an angle error in radians to rotate the aim.
     static func chip(power: Double) -> (result: ShotResult, angleError: Double) {
-        var carry = Club.wedge.maxYards * power
+        var carry = Club.sandWedge.maxYards * power
         var flavor: ShotFlavor = .clean
         var accuracy = Int.random(in: 88...100)
 
@@ -127,7 +127,7 @@ enum ShotEngine {
         }
 
         let result = ShotResult(
-            club: .wedge,
+            club: .sandWedge,
             powerPct: Int(power * 100),
             accuracyPct: accuracy,
             rating: ShotRating(accuracyPct: accuracy),

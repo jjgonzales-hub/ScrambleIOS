@@ -91,6 +91,32 @@ The SpriteKit top-down renderer is replaced. What's in:
   still compile but are unused — delete once 3D is validated on device.
 - Not yet done: aim control, terrain height, character variants per player.
 
+### v0.5 Golf Dreams faithfulness pass (2026-07-12)
+
+JJ's directive: play damn near identical to Golf Dreams; differentiation
+is avatars/cosmetics. Deep research (TouchArcade dev thread + reviews)
+documented in SWING_MECHANICS.md. Implemented:
+
+- **Exponential power** (dev-confirmed model): power = exp(2.3×(pull−1))
+  × tempo; swipe speed demoted to a ±4% tempo nudge (reviews: "speed of
+  the swipe seems to have almost no effect").
+- **Shape from both phases**: backswing drift counts 40%, through-drift
+  full weight → earlyLate.
+- **Full club bag** (DR 265 / 3W 235 / 5I 195 / 7I 165 / 9I 135 / PW 105
+  / SW 70 / putter): `Club.bag`, suggestedClub by distance+lie,
+  `clubOverride` (reset each turn), bag chip in bottom bar opens a
+  horizontal picker with carry yardages. Putter allowed off-green from
+  fringe/fairway ≤55 yd (Texas wedge).
+- **Aim control**: drag the top strip horizontally to rotate the aim line
+  (±0.55 rad); camera/golfer/preview follow live; resets each shot.
+- **Flight tracer**: dotted arc of the actual flight persists until the
+  next shot is set up.
+- Post-shot stats use per-club swing speeds (`Club.swingMPH`).
+- NOT yet: flop/punch shot types, club upgrades/economy — next pass.
+- Gotcha hit: Xcode's incremental build silently skipped recompiling
+  after the 9-day gap (stale build DB) — if numbers look old, nuke
+  DerivedData and rebuild clean.
+
 ### Low-poly art execution pass (2026-07-03) — "make it not look cheap"
 
 - **Faceted low-poly terrain replaces the painted flat plane.**

@@ -26,6 +26,7 @@ final class Course3DScene: NSObject {
     private let driverClub = SCNNode()
     private let putterClub = SCNNode()
     private let previewRoot = SCNNode()
+    private let tracerRoot = SCNNode()
     private let greenGridNode = SCNNode()
     private let flagNode = SCNNode()
     private let teeNode: SCNNode
@@ -188,6 +189,7 @@ final class Course3DScene: NSObject {
         scene.rootNode.addChildNode(ballBlobShadow)
         scene.rootNode.addChildNode(teeNode)
         scene.rootNode.addChildNode(previewRoot)
+        scene.rootNode.addChildNode(tracerRoot)
     }
 
     /// Flat-shaded triangle mesh over the hole. Vertices are duplicated
@@ -610,6 +612,7 @@ final class Course3DScene: NSObject {
     // MARK: - Ball placement & markers
 
     func placeBall(at p: CGPoint, onTee: Bool) {
+        clearTracer()
         flight = nil
         puttActive = false
         puttVelocity = .zero
@@ -691,6 +694,7 @@ final class Course3DScene: NSObject {
 
     func startPutt(velocity: CGVector) {
         removePreview()
+        clearTracer()
         puttVelocity = velocity
         puttActive = true
     }
@@ -702,7 +706,7 @@ final class Course3DScene: NSObject {
         let dir = direction.normalized
         let travel: CGFloat = isPutt
             ? CGFloat(power) * 480 / 1.9
-            : CGFloat(power * Club.wedge.maxYards) * Hole.pointsPerYard
+            : CGFloat(power * Club.sandWedge.maxYards) * Hole.pointsPerYard
 
         let dotCount = max(Int(travel / 16), 2)
         for i in 1...dotCount {
@@ -718,6 +722,27 @@ final class Course3DScene: NSObject {
 
     func removePreview() {
         previewRoot.childNodes.forEach { $0.removeFromParentNode() }
+    }
+
+    /// Golf Dreams-style tracer: a dotted arc of the flight that just
+    /// happened, persisting until the next shot is set up.
+    private func showTracer(_ f: FlightState) {
+        clearTracer()
+        let n = f.samples.count
+        for (i, p) in f.samples.enumerated() where i % 2 == 0 {
+            let t = CGFloat(i) / CGFloat(n - 1)
+            let h = ballRest + (f.apex > 0 ? f.apex * 4 * t * (1 - t) : 0)
+            let geo = SCNSphere(radius: 0.28)
+            geo.firstMaterial = Course3DScene.unlitMaterial(
+                UIColor(hex: 0xF5EFDA).withAlphaComponent(0.5))
+            let dot = SCNNode(geometry: geo)
+            dot.position = world(p, h: h)
+            tracerRoot.addChildNode(dot)
+        }
+    }
+
+    private func clearTracer() {
+        tracerRoot.childNodes.forEach { $0.removeFromParentNode() }
     }
 
     /// Physics-true putt read: integrates the SAME friction + slope model
@@ -871,6 +896,7 @@ final class Course3DScene: NSObject {
             )
             if s >= 1 {
                 flight = nil
+                showTracer(f)
                 if hole.lie(at: f.rollTarget) == .water {
                     splash(at: f.rollTarget)
                 }

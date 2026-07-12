@@ -21,17 +21,32 @@ struct MatchConfig: Identifiable {
     let hole: Hole
 }
 
+/// The bag — Golf Dreams style: you pick the club, each shows its carry,
+/// and distance control comes from matching club + backswing to the shot.
 enum Club: String, CaseIterable, Equatable {
     case driver = "Driver"
-    case iron = "Iron"
-    case wedge = "Wedge"
+    case wood3 = "3 Wood"
+    case iron5 = "5 Iron"
+    case iron7 = "7 Iron"
+    case iron9 = "9 Iron"
+    case pitchWedge = "Pitch Wedge"
+    case sandWedge = "Sand Wedge"
     case putter = "Putter"
 
+    /// Full-swing clubs, longest first (the picker order).
+    static let bag: [Club] = [.driver, .wood3, .iron5, .iron7, .iron9,
+                              .pitchWedge, .sandWedge]
+
+    /// Full-swing carry at 100% with a clean strike.
     var maxYards: Double {
         switch self {
-        case .driver: return 290
-        case .iron: return 185
-        case .wedge: return 65
+        case .driver: return 265
+        case .wood3: return 235
+        case .iron5: return 195
+        case .iron7: return 165
+        case .iron9: return 135
+        case .pitchWedge: return 105
+        case .sandWedge: return 70
         case .putter: return 40
         }
     }
@@ -40,8 +55,12 @@ enum Club: String, CaseIterable, Equatable {
     var curveYards: Double {
         switch self {
         case .driver: return 55
-        case .iron: return 32
-        case .wedge: return 10
+        case .wood3: return 45
+        case .iron5: return 34
+        case .iron7: return 26
+        case .iron9: return 18
+        case .pitchWedge: return 12
+        case .sandWedge: return 8
         case .putter: return 0
         }
     }
@@ -49,18 +68,40 @@ enum Club: String, CaseIterable, Equatable {
     var apexScale: CGFloat {
         switch self {
         case .driver: return 1.6
-        case .iron: return 1.45
-        case .wedge: return 1.25
+        case .wood3: return 1.5
+        case .iron5: return 1.45
+        case .iron7: return 1.4
+        case .iron9: return 1.38
+        case .pitchWedge: return 1.32
+        case .sandWedge: return 1.25
         case .putter: return 1.0
         }
     }
 
-    var emoji: String {
+    /// Clean-strike swing speed at 100%, for the post-shot stat line.
+    var swingMPH: Double {
         switch self {
-        case .driver: return "🏌️"
-        case .iron: return "⛳️"
-        case .wedge: return "🪁"
-        case .putter: return "🥅"
+        case .driver: return 118
+        case .wood3: return 112
+        case .iron5: return 102
+        case .iron7: return 96
+        case .iron9: return 90
+        case .pitchWedge: return 86
+        case .sandWedge: return 82
+        case .putter: return 0
+        }
+    }
+
+    var shortLabel: String {
+        switch self {
+        case .driver: return "DR"
+        case .wood3: return "3W"
+        case .iron5: return "5I"
+        case .iron7: return "7I"
+        case .iron9: return "9I"
+        case .pitchWedge: return "PW"
+        case .sandWedge: return "SW"
+        case .putter: return "PT"
         }
     }
 }
