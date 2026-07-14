@@ -479,7 +479,9 @@ struct GameView: View {
                               lateralYards: result.lateralYards,
                               flavor: result.flavor,
                               apexScale: club.apexScale,
-                              rollFactor: CGFloat(club.rollFactor)) { end, samples in
+                              rollFactor: CGFloat(club.rollFactor),
+                              tracerHex: result.rating == .perfect
+                                  ? 0xFFD98A : 0xF5EFDA) { end, samples in
                 engine.resolveLanding(kind: .meter(club), result: result,
                                       end: end, samples: samples)
             }

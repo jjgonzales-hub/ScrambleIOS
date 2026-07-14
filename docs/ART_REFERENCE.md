@@ -1,4 +1,32 @@
-# Scramble — art reference spec (v0.2, 3D direction)
+# Scramble — art reference spec
+
+## PALETTE V2 (2026-07-14, from JJ's style board — CURRENT)
+
+JJ supplied a full visual style board ("SCRAMBLE — 2v2 golf over
+iMessage"). Direction: warm, friendly, inviting; soft shadows, subtle
+gradients. This supersedes the strictly-muted v1 palette below.
+
+| Hex | Use |
+|---|---|
+| 1F3B2E | deepest green — backdrop, tree margins |
+| 2E5E3E | rough, pine tier 1 |
+| 3C7A4C | pine tier 2 |
+| 4CAF50 | UI accent, pine tier 3, fairway family |
+| 66A852 / 74B45F | fairway mow stripes |
+| A8D672 | putting green |
+| F5E6C8 / EAD2A0 | cream / sand |
+| FF6B6B | coral — flag, wind warning, danger |
+| 5D9FD6 | water |
+| 7FB9E0 → F2DCA4 | sky gradient, blue overhead to warm horizon |
+
+Implemented in-engine (v0.7): gradient sky + drifting cartoon clouds,
+3-tier pines, dashed white aim line to target, pull power strip
+(green→amber→coral), golden tracer on PURE strikes, cup sparkle burst,
+coral flag on white pole. Board items needing the asset pipeline:
+course themes (beach/desert/mountain/garden/night), avatar celebration
+animations, icon button row.
+
+# v1 spec (v0.2, 3D direction) — historical
 
 Style target: "indie golf game" — halfway between Super Battle Golf and a
 real golf sim. Chunky cartoon characters, grounded course, golden-hour

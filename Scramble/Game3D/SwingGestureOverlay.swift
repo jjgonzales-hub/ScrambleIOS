@@ -59,6 +59,24 @@ struct SwingGestureOverlay: View {
     var body: some View {
         ZStack {
             if let s = start, let c = current {
+                // Style-board power strip: fills with the pull,
+                // green through amber to coral.
+                HStack {
+                    ZStack(alignment: .bottom) {
+                        Capsule().fill(Palette.ink.opacity(0.35))
+                        Capsule()
+                            .fill(LinearGradient(
+                                colors: [Color(hex: 0x4CAF50),
+                                         Color(hex: 0xF2C94C),
+                                         Color(hex: 0xFF6B6B)],
+                                startPoint: .bottom, endPoint: .top))
+                            .frame(height: max(240 * pull(s, deepest ?? c), 12))
+                    }
+                    .frame(width: 10, height: 240)
+                    Spacer()
+                }
+                .padding(.leading, 14)
+
                 Path { p in
                     p.move(to: CGPoint(x: s.x, y: s.y - 70))
                     p.addLine(to: CGPoint(x: s.x, y: s.y + maxPull + 30))

@@ -6,12 +6,12 @@ import SpriteKit
 enum Palette {
     static let ink = Color(hex: 0x171B12)       // near-black, green cast
     static let card = Color(hex: 0x232B1C)      // dark olive surface
-    static let accent = Color(hex: 0x7CA344)    // scramble green
+    static let accent = Color(hex: 0x4CAF50)    // scramble green (style board)
     static let cream = Color(hex: 0xF0EDE0)
     static let fairway = Color(hex: 0x8FB35A)
     static let sand = Color(hex: 0xC7A16B)
     static let water = Color(hex: 0x6E97AC)
-    static let danger = Color(hex: 0xB5533C)
+    static let danger = Color(hex: 0xFF6B6B)   // coral (style board)
 }
 
 enum SceneColors {

@@ -29,6 +29,7 @@ final class Course3DScene: NSObject {
     private let putterClub = SCNNode()
     private let previewRoot = SCNNode()
     private let tracerRoot = SCNNode()
+    private let aimLineRoot = SCNNode()
     private let greenGridNode = SCNNode()
     private let flagNode = SCNNode()
     private let teeNode: SCNNode
@@ -74,6 +75,7 @@ final class Course3DScene: NSObject {
         let end: CGPoint
         let rollTarget: CGPoint
         let rollDuration: Double
+        let tracerHex: UInt32
         let completion: (CGPoint, [CGPoint]) -> Void
         var elapsed: Double = 0
         var rolling = false
@@ -81,7 +83,7 @@ final class Course3DScene: NSObject {
         var rollStart: CGPoint = .zero
 
         init(samples: [CGPoint], duration: Double, apex: CGFloat, end: CGPoint,
-             rollTarget: CGPoint, rollDuration: Double,
+             rollTarget: CGPoint, rollDuration: Double, tracerHex: UInt32,
              completion: @escaping (CGPoint, [CGPoint]) -> Void) {
             self.samples = samples
             self.duration = duration
@@ -89,6 +91,7 @@ final class Course3DScene: NSObject {
             self.end = end
             self.rollTarget = rollTarget
             self.rollDuration = rollDuration
+            self.tracerHex = tracerHex
             self.completion = completion
         }
     }
@@ -127,7 +130,7 @@ final class Course3DScene: NSObject {
 
     private func buildScene() {
         scene.background.contents = Course3DScene.skyImage()
-        scene.fogColor = UIColor(hex: 0xE9C384)
+        scene.fogColor = UIColor(hex: 0xEBDCAE)
         scene.fogStartDistance = 1000
         scene.fogEndDistance = 3200
 
@@ -146,14 +149,14 @@ final class Course3DScene: NSObject {
         let ambient = SCNNode()
         ambient.light = SCNLight()
         ambient.light?.type = .ambient
-        ambient.light?.color = UIColor(hex: 0xF0E4C0)
+        ambient.light?.color = UIColor(hex: 0xF2EDD8)
         ambient.light?.intensity = 480
         scene.rootNode.addChildNode(ambient)
 
         let sun = SCNNode()
         sun.light = SCNLight()
         sun.light?.type = .directional
-        sun.light?.color = UIColor(hex: 0xFFEBBC)
+        sun.light?.color = UIColor(hex: 0xFFF3D6)
         sun.light?.intensity = 820
         sun.light?.castsShadow = true
         sun.light?.shadowColor = UIColor.black.withAlphaComponent(0.26)
@@ -165,7 +168,7 @@ final class Course3DScene: NSObject {
         // Endless ground beyond the hole
         let floor = SCNFloor()
         floor.reflectivity = 0
-        floor.firstMaterial = Course3DScene.material(0x3A5226)
+        floor.firstMaterial = Course3DScene.material(0x1F3B2E)
         let floorNode = SCNNode(geometry: floor)
         floorNode.position.y = -0.35
         scene.rootNode.addChildNode(floorNode)
@@ -176,6 +179,7 @@ final class Course3DScene: NSObject {
         scene.rootNode.addChildNode(buildTerrain())
 
         buildTrees()
+        buildClouds()
         buildPinAndCup()
         buildGreenGrid()
         buildGolfer()
@@ -192,6 +196,7 @@ final class Course3DScene: NSObject {
         scene.rootNode.addChildNode(teeNode)
         scene.rootNode.addChildNode(previewRoot)
         scene.rootNode.addChildNode(tracerRoot)
+        scene.rootNode.addChildNode(aimLineRoot)
     }
 
     /// Flat-shaded triangle mesh over the hole. Vertices are duplicated
@@ -273,17 +278,17 @@ final class Course3DScene: NSObject {
              Float(hex & 0xFF) / 255)
         }
         switch hole.lie(at: p) {
-        case .water: return rgb(0x6E97AC)
-        case .bunker: return rgb(0xC7A16B)
-        case .green: return rgb(0xA9C871)
-        case .fringe: return rgb(0x9CBE63)
+        case .water: return rgb(0x5D9FD6)
+        case .bunker: return rgb(0xEAD2A0)
+        case .green: return rgb(0xA8D672)
+        case .fringe: return rgb(0x8CC868)
         case .fairway, .tee:
-            return Int(p.x / 32) % 2 == 0 ? rgb(0x8FB35A) : rgb(0x97BB61)
-        case .trees: return rgb(0x3A5226)
+            return Int(p.x / 32) % 2 == 0 ? rgb(0x66A852) : rgb(0x74B45F)
+        case .trees: return rgb(0x1F3B2E)
         case .rough:
             return (p.x < hole.treeMarginX + 20
                     || p.x > hole.sceneSize.width - hole.treeMarginX - 20)
-                ? rgb(0x465F30) : rgb(0x4F6B33)
+                ? rgb(0x274D33) : rgb(0x2E5E3E)
         }
     }
 
@@ -310,8 +315,35 @@ final class Course3DScene: NSObject {
         }
     }
 
-    /// Low-poly tree: boxy trunk + two stacked square pyramids, the upper
-    /// rotated 45° — flat faces catch the light like the terrain facets.
+    /// Puffy flat-white cartoon clouds drifting slowly over the course.
+    private func buildClouds() {
+        for _ in 0..<6 {
+            let cloud = SCNNode()
+            let puffs = Int.random(in: 3...4)
+            for p in 0..<puffs {
+                let r = CGFloat.random(in: 9...16)
+                let geo = SCNSphere(radius: r)
+                geo.firstMaterial = Course3DScene.unlitMaterial(
+                    UIColor.white.withAlphaComponent(0.92))
+                let puff = SCNNode(geometry: geo)
+                puff.position = SCNVector3(Float(p) * Float(r) * 1.05
+                                           - Float(puffs) * 7,
+                                           Float.random(in: -2...3),
+                                           Float.random(in: -3...3))
+                puff.scale = SCNVector3(1, 0.55, 0.8)
+                cloud.addChildNode(puff)
+            }
+            cloud.position = SCNVector3(Float.random(in: -100...700),
+                                        Float.random(in: 135...195),
+                                        Float.random(in: -950 ... -250))
+            let drift = SCNAction.moveBy(x: 60, y: 0, z: 0, duration: 95)
+            cloud.runAction(.repeatForever(.sequence([drift, drift.reversed()])))
+            scene.rootNode.addChildNode(cloud)
+        }
+    }
+
+    /// Low-poly pine: boxy trunk + three stacked square pyramids, middle
+    /// tier rotated 45° — flat faces catch the light like the terrain.
     private func addTree(at p: CGPoint) {
         let tree = SCNNode()
         let height = CGFloat.random(in: 22...34)
@@ -323,22 +355,22 @@ final class Course3DScene: NSObject {
         trunk.position.y = Float(height * 0.2)
         tree.addChildNode(trunk)
 
-        let lowerR = CGFloat.random(in: 8.5...11.5)
-        let lowerGeo = SCNPyramid(width: lowerR * 2, height: height * 0.42,
-                                  length: lowerR * 2)
-        lowerGeo.firstMaterial = Course3DScene.material(0x3E5434)
-        let lower = SCNNode(geometry: lowerGeo)
-        lower.position.y = Float(height * 0.34)
-        tree.addChildNode(lower)
-
-        let upperR = lowerR * 0.62
-        let upperGeo = SCNPyramid(width: upperR * 2, height: height * 0.4,
-                                  length: upperR * 2)
-        upperGeo.firstMaterial = Course3DScene.material(0x4E6640)
-        let upper = SCNNode(geometry: upperGeo)
-        upper.position.y = Float(height * 0.58)
-        upper.eulerAngles.y = .pi / 4
-        tree.addChildNode(upper)
+        let baseR = CGFloat.random(in: 8.5...11.5)
+        let tiers: [(CGFloat, CGFloat, UInt32)] = [
+            (1.0, 0.28, 0x2E5E3E),
+            (0.72, 0.5, 0x3C7A4C),
+            (0.46, 0.7, 0x4CAF50)
+        ]
+        for (i, tier) in tiers.enumerated() {
+            let r = baseR * tier.0
+            let geo = SCNPyramid(width: r * 2, height: height * 0.34,
+                                 length: r * 2)
+            geo.firstMaterial = Course3DScene.material(tier.2)
+            let n = SCNNode(geometry: geo)
+            n.position.y = Float(height * tier.1)
+            if i % 2 == 1 { n.eulerAngles.y = .pi / 4 }
+            tree.addChildNode(n)
+        }
 
         tree.eulerAngles.y = Float.random(in: 0...(2 * .pi))
         tree.position = world(p, h: 0)
@@ -353,14 +385,14 @@ final class Course3DScene: NSObject {
         scene.rootNode.addChildNode(cup)
 
         let poleGeo = SCNCylinder(radius: 0.4, height: 20)
-        poleGeo.firstMaterial = Course3DScene.material(0xF0EDE0)
+        poleGeo.firstMaterial = Course3DScene.material(0xFFFFFF)
         let pole = SCNNode(geometry: poleGeo)
         pole.position.y = 10
         flagNode.addChildNode(pole)
 
         // Cloth hangs off a pivot at the pole so it can waggle in the wind
         let clothGeo = SCNPlane(width: 7, height: 3.8)
-        clothGeo.firstMaterial = Course3DScene.material(0xB5533C)
+        clothGeo.firstMaterial = Course3DScene.material(0xFF6B6B)
         clothGeo.firstMaterial?.isDoubleSided = true
         let cloth = SCNNode(geometry: clothGeo)
         cloth.position = SCNVector3(3.6, 17.6, 0)
@@ -711,6 +743,29 @@ final class Course3DScene: NSObject {
         driverClub.isHidden = putting
         greenGridNode.isHidden = !putting
 
+        // Dashed aim line down the chosen line (style board). Putts use
+        // the curved read line instead.
+        aimLineRoot.childNodes.forEach { $0.removeFromParentNode() }
+        if !putting {
+            let carry: CGFloat
+            if case .meter(let club) = kind {
+                carry = CGFloat(club.maxYards) * Hole.pointsPerYard
+            } else {
+                carry = 100
+            }
+            let len = min(carry, spot.distance(to: hole.pin) + 24)
+            var t: CGFloat = 16
+            while t < len {
+                let geo = SCNSphere(radius: 0.34)
+                geo.firstMaterial = Course3DScene.unlitMaterial(
+                    UIColor.white.withAlphaComponent(0.3 + 0.32 * (1 - t / len)))
+                let dot = SCNNode(geometry: geo)
+                dot.position = world(spot + aimU * t, h: 0.5)
+                aimLineRoot.addChildNode(dot)
+                t += 13
+            }
+        }
+
         let apply = {
             self.cameraNode.position = camPos
             self.golferNode.position = self.world(golfSpot, h: 0)
@@ -770,10 +825,11 @@ final class Course3DScene: NSObject {
     /// water-entry detection, with height added as a parabola for the arc.
     func animateShot(from: CGPoint, aim: CGVector, carryYards: Double,
                      lateralYards: Double, flavor: ShotFlavor, apexScale: CGFloat,
-                     rollFactor: CGFloat,
+                     rollFactor: CGFloat, tracerHex: UInt32 = 0xF5EFDA,
                      completion: @escaping (CGPoint, [CGPoint]) -> Void) {
         removePreview()
         clearTracer()
+        aimLineRoot.childNodes.forEach { $0.removeFromParentNode() }
         ball2D = from
         ballRest = 0.45
 
@@ -823,6 +879,7 @@ final class Course3DScene: NSObject {
             end: end,
             rollTarget: final,
             rollDuration: min(0.25 + Double(rollDist) / 140, 0.9),
+            tracerHex: tracerHex,
             completion: completion
         )
     }
@@ -832,6 +889,7 @@ final class Course3DScene: NSObject {
     func startPutt(velocity: CGVector) {
         removePreview()
         clearTracer()
+        aimLineRoot.childNodes.forEach { $0.removeFromParentNode() }
         puttVelocity = velocity
         puttActive = true
     }
@@ -871,7 +929,7 @@ final class Course3DScene: NSObject {
             let h = ballRest + (f.apex > 0 ? f.apex * 4 * t * (1 - t) : 0)
             let geo = SCNSphere(radius: 0.28)
             geo.firstMaterial = Course3DScene.unlitMaterial(
-                UIColor(hex: 0xF5EFDA).withAlphaComponent(0.5))
+                UIColor(hex: f.tracerHex).withAlphaComponent(0.55))
             let dot = SCNNode(geometry: geo)
             dot.position = world(p, h: h)
             tracerRoot.addChildNode(dot)
@@ -1104,6 +1162,23 @@ final class Course3DScene: NSObject {
         puttVelocity = .zero
         ballBlobShadow.opacity = 0
         SoundFX.play("cup_drop", volume: 0.9)
+        // Sparkle burst out of the cup (style board: hole impact)
+        for _ in 0..<10 {
+            let geo = SCNSphere(radius: CGFloat.random(in: 0.12...0.22))
+            geo.firstMaterial = Course3DScene.unlitMaterial(
+                UIColor(hex: Bool.random() ? 0xFFFFFF : 0xFFD98A))
+            let spark = SCNNode(geometry: geo)
+            spark.position = world(hole.pin, h: 0.4)
+            scene.rootNode.addChildNode(spark)
+            let up = SCNAction.group([
+                .moveBy(x: CGFloat.random(in: -2.4...2.4),
+                        y: CGFloat.random(in: 2.5...5),
+                        z: CGFloat.random(in: -2.4...2.4), duration: 0.55),
+                .fadeOut(duration: 0.55)
+            ])
+            up.timingMode = .easeOut
+            spark.runAction(.sequence([up, .removeFromParentNode()]))
+        }
         let drop = SCNAction.group([
             .move(to: world(hole.pin, h: 0.2), duration: 0.15),
             .scale(to: 0.2, duration: 0.15),
@@ -1199,18 +1274,21 @@ final class Course3DScene: NSObject {
 
     // MARK: - Painted textures
 
-    /// Banded golden-hour sky, flat colors — no gradients, per the art rules.
+    /// Style-board sky: soft blue overhead melting into a warm horizon.
     private static func skyImage() -> UIImage {
         let size = CGSize(width: 16, height: 512)
         return UIGraphicsImageRenderer(size: size).image { ctx in
-            let cg = ctx.cgContext
-            cg.setFillColor(UIColor(hex: 0xF3DCA9).cgColor)
-            cg.fill(CGRect(x: 0, y: 0, width: 16, height: 240))
-            cg.setFillColor(UIColor(hex: 0xEFD196).cgColor)
-            cg.fill(CGRect(x: 0, y: 240, width: 16, height: 140))
-            cg.setFillColor(UIColor(hex: 0xE9C384).cgColor)
-            cg.fill(CGRect(x: 0, y: 380, width: 16, height: 132))
+            let colors = [UIColor(hex: 0x7FB9E0).cgColor,
+                          UIColor(hex: 0xCBDfC2).cgColor,
+                          UIColor(hex: 0xF2DCA4).cgColor]
+            let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                                      colors: colors as CFArray,
+                                      locations: [0, 0.58, 1])!
+            ctx.cgContext.drawLinearGradient(
+                gradient, start: .zero,
+                end: CGPoint(x: 0, y: size.height), options: [])
         }
     }
+
 
 }
