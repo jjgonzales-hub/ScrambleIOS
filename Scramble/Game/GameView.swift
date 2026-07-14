@@ -64,7 +64,10 @@ struct GameView: View {
                     let isPutt = engine.currentKind == .putt
                     SwingGestureOverlay(
                         mode: isPutt ? .putt : .chip,
-                        label: { b in flickLabel(power: b) },
+                        label: { b in
+                            flickLabel(power: isPutt ? puttPower(b)
+                                                     : chipPower(b, upSpeed: nil))
+                        },
                         onPull: { b, aimDrift in
                             // Golf Dreams 1:1 takeaway: chips mirror the
                             // finger with a real half-backswing; putts use
@@ -77,16 +80,24 @@ struct GameView: View {
                             let dir = aimedDirection(drift: aimDrift)
                             if isPutt {
                                 scene.showPuttPreview(from: engine.currentSpot,
-                                                      direction: dir, power: b)
+                                                      direction: dir,
+                                                      power: puttPower(b))
                             } else {
                                 scene.showPreview(from: engine.currentSpot,
-                                                  direction: dir, power: b,
+                                                  direction: dir,
+                                                  power: chipPower(b, upSpeed: nil),
                                                   isPutt: false)
                             }
                         },
                         onSwing: { b, aimDrift, _, upSpeed in
-                            let flick = min(upSpeed / 2600, 1)
-                            let power = min(max(b * (0.55 + 0.9 * flick), 0.03), 1)
+                            // Putting is pure pendulum: stroke length IS
+                            // the pace, no flick multiplier — so the read
+                            // line is the literal truth and short putts
+                            // are finesse, not reflexes. Chips use the
+                            // same exponential model as full swings.
+                            let power = isPutt
+                                ? max(puttPower(b), 0.015)
+                                : chipPower(b, upSpeed: upSpeed)
                             executeFlick(dir: aimedDirection(drift: aimDrift),
                                          power: power)
                         },
@@ -122,7 +133,8 @@ struct GameView: View {
                                               kind: engine.currentKind, animated: false)
                                     if engine.currentKind == .putt {
                                         scene.showPuttPreview(from: engine.currentSpot,
-                                                              direction: aimU, power: 0.3)
+                                                              direction: aimU,
+                                                              power: puttPower(0.5))
                                     } else {
                                         scene.showPreview(from: engine.currentSpot,
                                                           direction: aimU, power: 0.55,
@@ -401,6 +413,20 @@ struct GameView: View {
     /// the current aim line (up to ~31° at full drift) to play the break.
     private func aimedDirection(drift: Double) -> CGVector {
         (aimU + aimU.perpendicularRight * CGFloat(drift * 0.6)).normalized
+    }
+
+    /// Pendulum putt pace: gentle curve for feel at short range, full
+    /// pull rolls out the putter's 40-yd max. The same number drives the
+    /// stroke, the read line, and the pill — they can never disagree.
+    private func puttPower(_ b: Double) -> Double {
+        pow(b, 1.35) * 0.317
+    }
+
+    /// Chips are little swings: same exponential backswing model as full
+    /// shots, with the same tiny tempo nudge when there's a real rip.
+    private func chipPower(_ b: Double, upSpeed: Double?) -> Double {
+        let tempo = upSpeed.map { 0.96 + 0.08 * min($0 / 2600, 1) } ?? 1.0
+        return min(exp(2.0 * (b - 1)) * tempo, 1.0)
     }
 
     private func flickLabel(power: Double) -> String {

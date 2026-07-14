@@ -34,12 +34,19 @@ struct SwingGestureOverlay: View {
         switch mode {
         case .full: return 260
         case .chip: return 210
-        case .putt: return 180
+        case .putt: return 230
         }
     }
 
-    /// A putt can be released gently; a drive needs a real rip.
-    private var minUpSpeed: Double { mode == .full ? 250 : 150 }
+    /// A putt can be released gently (finesse); chips need a flick;
+    /// a drive needs a real rip.
+    private var minUpSpeed: Double {
+        switch mode {
+        case .full: return 250
+        case .chip: return 150
+        case .putt: return 90
+        }
+    }
 
     private var hint: String {
         switch mode {
