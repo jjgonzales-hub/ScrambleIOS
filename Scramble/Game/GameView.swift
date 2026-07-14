@@ -425,12 +425,28 @@ struct GameView: View {
         let aim = aimU
         engine.beginShot()
 
-        // Downswing plays out, then the ball launches at the moment of
-        // contact — the shot was decided at the second tap, the animation
-        // just delivers it.
-        SoundFX.play("whoosh", volume: 0.65)
-        scene.swingRelease {
-            Haptics.accuracyLock()
+        // The swing quality drives the animation: pure = tall balanced
+        // finish, mishit = truncated finish + a lurch toward the miss.
+        // You should read the strike from the body before the ball lands.
+        let quality: Course3DScene.SwingQuality
+        switch result.flavor {
+        case .pure:
+            quality = .pure
+        case .topped, .fat, .chunk, .bigHook, .bigSlice:
+            quality = .mishit(lateral: earlyLate >= 0 ? 1 : -1)
+        default:
+            quality = abs(earlyLate) > 0.33
+                ? .mishit(lateral: earlyLate > 0 ? 1 : -1)
+                : .clean
+        }
+
+        SoundFX.play("whoosh", volume: 0.5 + Float(power) * 0.3)
+        scene.swingRelease(power: power, quality: quality) {
+            if case .mishit = quality {
+                Haptics.rumble()
+            } else {
+                Haptics.accuracyLock()
+            }
             playHitSound(result: result, club: club)
             scene.animateShot(from: spot, aim: aim,
                               carryYards: result.carryYards,

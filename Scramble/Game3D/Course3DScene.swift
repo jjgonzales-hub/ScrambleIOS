@@ -22,7 +22,9 @@ final class Course3DScene: NSObject {
     private let ballNode = SCNNode(geometry: SCNSphere(radius: 0.45))
     private let ballBlobShadow: SCNNode
     private let golferNode = SCNNode()
+    private let torsoNode = SCNNode()
     private let swingNode = SCNNode()
+    private let swooshNode = SCNNode()
     private let driverClub = SCNNode()
     private let putterClub = SCNNode()
     private let previewRoot = SCNNode()
@@ -457,9 +459,12 @@ final class Course3DScene: NSObject {
         let shoeR = part(SCNSphere(radius: 0.62), 0xEDE3CB, 0.62, 0.35, -0.25, in: golferNode)
         shoeR.scale = SCNVector3(1, 0.55, 1.5)
 
-        // Torso + olive band
-        _ = part(SCNCapsule(capRadius: 1.35, height: 3.8), 0xF2E8D5, 0, 4.4, 0, in: golferNode)
-        _ = part(SCNCylinder(radius: 1.38, height: 0.55), 0x8E9B63, 0, 4.35, 0, in: golferNode)
+        // Torso + olive band live in torsoNode so the body can coil
+        // (rotate around Y), sway for weight shift, and squish — the legs
+        // stay planted and the head stays still above it.
+        golferNode.addChildNode(torsoNode)
+        _ = part(SCNCapsule(capRadius: 1.35, height: 3.8), 0xF2E8D5, 0, 4.4, 0, in: torsoNode)
+        _ = part(SCNCylinder(radius: 1.38, height: 0.55), 0x8E9B63, 0, 4.35, 0, in: torsoNode)
 
         // Head + backwards cap + button + bill (local +z = toward camera)
         _ = part(SCNSphere(radius: 1.5), 0xE8B98A, 0, 7.3, 0, in: golferNode)
@@ -470,8 +475,25 @@ final class Course3DScene: NSObject {
         bill.scale = SCNVector3(1, 0.22, 1.2)
 
         // ---- Swing assembly (pivot at the shoulders) ----
+        // Child of the torso, so the coil carries the arms and club.
         swingNode.position = SCNVector3(0, 5.3, -0.3)
-        golferNode.addChildNode(swingNode)
+        torsoNode.addChildNode(swingNode)
+
+        // Cartoon swoosh crescent in the swing plane — flashes during the
+        // downswing as the motion-blur read on the club head.
+        let swooshPath = UIBezierPath()
+        swooshPath.addArc(withCenter: .zero, radius: 5.3,
+                          startAngle: -2.2, endAngle: -0.5, clockwise: true)
+        swooshPath.addArc(withCenter: .zero, radius: 3.9,
+                          startAngle: -0.5, endAngle: -2.2, clockwise: false)
+        swooshPath.close()
+        let swooshGeo = SCNShape(path: swooshPath, extrusionDepth: 0.05)
+        swooshGeo.firstMaterial = Course3DScene.unlitMaterial(
+            UIColor(hex: 0xF5EFDA).withAlphaComponent(0.9))
+        swooshNode.geometry = swooshGeo
+        swooshNode.position = SCNVector3(0, 0, -1.7)
+        swooshNode.opacity = 0
+        swingNode.addChildNode(swooshNode)
 
         let armL = part(SCNCapsule(capRadius: 0.42, height: 2.8), 0xE8B98A,
                         -1.55, -1.1, -0.4, in: swingNode)
@@ -517,31 +539,130 @@ final class Course3DScene: NSObject {
         manualBackswing = amount.map { min(max($0, 0), 1) }
     }
 
-    /// Full swing from the top: fast downswing, `impact` fires the moment
-    /// the club reaches the ball, then follow-through and settle.
-    func swingRelease(impact: @escaping () -> Void) {
+    enum SwingQuality {
+        case pure                       // clean, balanced, full finish
+        case clean                      // solid, normal finish
+        case mishit(lateral: CGFloat)   // truncated finish + lurch (+1 right)
+    }
+
+    /// Full swing from the top, kinematically sequenced like a real one:
+    /// the hips/torso fire first, the shoulders and club lag ~0.08s behind,
+    /// `impact` fires as the club face strikes through the ball's spot,
+    /// then follow-through, a held finish, and a settle back to address.
+    /// Pure strikes finish tall and balanced; mishits cut the finish short
+    /// and lurch in the miss direction — readable before the ball lands.
+    func swingRelease(power: Double, quality: SwingQuality,
+                      impact: @escaping () -> Void) {
         isSwinging = true
         manualPullback = nil
         manualBackswing = nil
-        let follow = Course3DScene.followPose
-        let down = SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: 0.09)
+
+        let mishit: Bool
+        let lurch: CGFloat
+        if case .mishit(let lateral) = quality {
+            mishit = true
+            lurch = lateral
+        } else {
+            mishit = false
+            lurch = 0
+        }
+        let followAmount: CGFloat = mishit ? 0.55 : 1.0
+        let hold = mishit ? 0.25 : 0.6
+        let downDur = max(0.14 - 0.05 * power, 0.08)
+        let fp = Course3DScene.followPose
+
+        // --- Torso: unwinds FIRST, transfers weight to the front foot ---
+        let torsoDown = SCNAction.group([
+            .rotateTo(x: 0, y: 0.4, z: 0, duration: downDur + 0.1),
+            .move(to: SCNVector3(0, 0, -0.28), duration: downDur + 0.1),
+            .scale(to: 1.0, duration: downDur + 0.1)
+        ])
+        torsoDown.timingMode = .easeIn
+        let torsoThrough = SCNAction.group([
+            .rotateTo(x: 0, y: 0.95 * followAmount, z: 0, duration: 0.24),
+            .move(to: SCNVector3(0, 0, -0.45), duration: 0.24)
+        ])
+        torsoThrough.timingMode = .easeOut
+        var torsoSeq: [SCNAction] = [torsoDown, torsoThrough]
+        if mishit {
+            // Off-balance stumble toward the miss
+            let out = SCNAction.group([
+                .moveBy(x: lurch * 1.1, y: 0, z: 0, duration: 0.16),
+                .rotateBy(x: 0, y: 0, z: -lurch * 0.16, duration: 0.16)
+            ])
+            out.timingMode = .easeOut
+            let back = SCNAction.group([
+                .moveBy(x: -lurch * 1.1, y: 0, z: 0, duration: 0.4),
+                .rotateBy(x: 0, y: 0, z: lurch * 0.16, duration: 0.4)
+            ])
+            back.timingMode = .easeInEaseOut
+            torsoSeq += [.wait(duration: 0.1), out, back]
+        } else {
+            torsoSeq.append(.wait(duration: hold))
+        }
+        let torsoSettle = SCNAction.group([
+            .rotateTo(x: 0, y: 0, z: 0, duration: 0.8),
+            .move(to: SCNVector3(0, 0, 0), duration: 0.8)
+        ])
+        torsoSettle.timingMode = .easeInEaseOut
+        torsoSeq.append(torsoSettle)
+        torsoNode.runAction(.sequence(torsoSeq))
+
+        // --- Shoulders + club: lag behind the hips, strike, finish ---
+        let down = SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: downDur)
         down.timingMode = .easeIn
-        let through = SCNAction.rotateTo(x: CGFloat(follow.x),
-                                         y: CGFloat(follow.y),
-                                         z: CGFloat(follow.z), duration: 0.22)
+        let through = SCNAction.rotateTo(x: CGFloat(fp.x) * followAmount,
+                                         y: CGFloat(fp.y) * followAmount,
+                                         z: CGFloat(fp.z) * followAmount,
+                                         duration: 0.22)
         through.timingMode = .easeOut
-        let settle = SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: 0.5)
+        let settle = SCNAction.rotateTo(x: 0, y: 0, z: 0, duration: 0.8)
         settle.timingMode = .easeInEaseOut
+        let shake = CGFloat(max(0, power - 0.5)) * 1.8
+
         swingNode.runAction(.sequence([
+            .wait(duration: 0.08),
             down,
-            .run { _ in DispatchQueue.main.async(execute: impact) },
+            .run { [weak self] _ in
+                DispatchQueue.main.async {
+                    impact()
+                    guard let self else { return }
+                    // Impact punch + swoosh + power-scaled camera shake
+                    self.golferNode.runAction(.sequence([
+                        .scale(to: 1.02, duration: 0.06),
+                        .scale(to: 1.0, duration: 0.12)
+                    ]))
+                    self.swooshNode.runAction(.sequence([
+                        .fadeOpacity(to: 0.5, duration: 0.03),
+                        .fadeOpacity(to: 0, duration: 0.16)
+                    ]))
+                    self.shakeCamera(intensity: shake)
+                }
+            },
             through,
-            .wait(duration: 0.9),
+            .wait(duration: hold + (mishit ? 0.55 : 0)),
             settle,
             .run { [weak self] _ in
                 DispatchQueue.main.async { self?.isSwinging = false }
             }
         ]))
+    }
+
+    /// Brief decaying position jitter — light around 60% power, strong 95%+.
+    private func shakeCamera(intensity: CGFloat) {
+        guard intensity > 0.05 else { return }
+        var actions: [SCNAction] = []
+        var netX: CGFloat = 0, netY: CGFloat = 0
+        for i in 0..<5 {
+            let f = intensity * (1 - CGFloat(i) / 5) * 0.5
+            let dx = CGFloat.random(in: -f...f)
+            let dy = CGFloat.random(in: -f...f) * 0.6
+            netX += dx
+            netY += dy
+            actions.append(.moveBy(x: dx, y: dy, z: 0, duration: 0.035))
+        }
+        actions.append(.moveBy(x: -netX, y: -netY, z: 0, duration: 0.06))
+        cameraNode.runAction(.sequence(actions))
     }
 
     /// Putt/chip stroke from wherever the pull-back left the club.
@@ -873,6 +994,22 @@ final class Course3DScene: NSObject {
             swingNode.eulerAngles = SCNVector3(e.x + (target.x - e.x) * k,
                                                e.y + (target.y - e.y) * k,
                                                e.z + (target.z - e.z) * k)
+
+            // Body follows the gesture in real time: the torso coils −45°
+            // at full backswing, weight sways to the trail side, and the
+            // body squishes slightly as it loads. Pauses wherever the
+            // finger pauses, because it IS the finger.
+            let coil = manualPullback != nil ? 0 : Float(amount)
+            let ty = torsoNode.eulerAngles.y
+            torsoNode.eulerAngles.y = ty + (-0.78 * coil - ty) * k
+            let tz = torsoNode.position.z
+            torsoNode.position.z = tz + (0.32 * coil - tz) * k
+            let sx = torsoNode.scale.x
+            let targetSX = 1 + 0.03 * coil
+            let targetSY = 1 - 0.035 * coil
+            torsoNode.scale = SCNVector3(sx + (targetSX - sx) * k,
+                                         torsoNode.scale.y + (targetSY - torsoNode.scale.y) * k,
+                                         1)
         }
 
         // Camera focus eases toward the ball while it moves, back to the
