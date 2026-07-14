@@ -419,7 +419,7 @@ struct GameView: View {
     /// pull rolls out the putter's 40-yd max. The same number drives the
     /// stroke, the read line, and the pill — they can never disagree.
     private func puttPower(_ b: Double) -> Double {
-        pow(b, 1.35) * 0.317
+        pow(b, 1.6) * 0.317
     }
 
     /// Chips are little swings: same exponential backswing model as full

@@ -99,7 +99,7 @@ struct Hole {
             ],
             waterRects: [CGRect(x: 385, y: 470, width: 150, height: 190)],
             treeMarginX: 65,
-            greenSlope: CGVector(dx: 13, dy: -4)
+            greenSlope: CGVector(dx: 5.5, dy: -1.7)
         )
     }
 }

@@ -19,7 +19,7 @@ final class Course3DScene: NSObject {
 
     // MARK: - Nodes
 
-    private let ballNode = SCNNode(geometry: SCNSphere(radius: 0.45))
+    private let ballNode = SCNNode(geometry: SCNSphere(radius: 0.5))
     private let ballBlobShadow: SCNNode
     private let golferNode = SCNNode()
     private let torsoNode = SCNNode()
@@ -186,10 +186,11 @@ final class Course3DScene: NSObject {
 
         // Ball — slight gloss so it reads as a ball, not a blob
         let ballMat = SCNMaterial()
-        ballMat.diffuse.contents = UIColor(hex: 0xF0EDE0)
+        ballMat.diffuse.contents = UIColor.white
         ballMat.lightingModel = .blinn
         ballMat.specular.contents = UIColor(white: 1, alpha: 0.4)
         ballMat.shininess = 14
+        ballMat.emission.contents = UIColor(white: 1, alpha: 0.22)
         ballNode.geometry?.firstMaterial = ballMat
         scene.rootNode.addChildNode(ballNode)
         scene.rootNode.addChildNode(ballBlobShadow)
@@ -283,7 +284,7 @@ final class Course3DScene: NSObject {
         case .green: return rgb(0xA8D672)
         case .fringe: return rgb(0x8CC868)
         case .fairway, .tee:
-            return Int(p.x / 32) % 2 == 0 ? rgb(0x66A852) : rgb(0x74B45F)
+            return Int(p.x / 32) % 2 == 0 ? rgb(0x82C15D) : rgb(0x90CB6B)
         case .trees: return rgb(0x1F3B2E)
         case .rough:
             return (p.x < hole.treeMarginX + 20
