@@ -32,12 +32,6 @@ struct GameView: View {
             SceneView(scene: scene.scene, pointOfView: scene.cameraNode, options: [])
                 .ignoresSafeArea()
 
-            VStack {
-                hud
-                Spacer()
-                if engine.phase == .aiming { bottomBar }
-            }
-
             // One-motion swing for every club (Golf Dreams style).
             // Full shots: drift = shot shape (hook/slice).
             // Chips/putts: drift = AIM, so you can play the break; the
@@ -72,7 +66,14 @@ struct GameView: View {
                         mode: isPutt ? .putt : .chip,
                         label: { b in flickLabel(power: b) },
                         onPull: { b, aimDrift in
-                            scene.setPullback(CGFloat(b))
+                            // Golf Dreams 1:1 takeaway: chips mirror the
+                            // finger with a real half-backswing; putts use
+                            // the pendulum stroke.
+                            if isPutt {
+                                scene.setPullback(CGFloat(b))
+                            } else {
+                                scene.setBackswing(CGFloat(b) * 0.55)
+                            }
                             let dir = aimedDirection(drift: aimDrift)
                             if isPutt {
                                 scene.showPuttPreview(from: engine.currentSpot,
@@ -91,6 +92,7 @@ struct GameView: View {
                         },
                         onCancel: {
                             scene.setPullback(nil)
+                            scene.setBackswing(nil)
                             scene.removePreview()
                         }
                     )
@@ -135,6 +137,15 @@ struct GameView: View {
                     Spacer()
                 }
                 .ignoresSafeArea()
+            }
+
+            // HUD + bottom bar sit ABOVE the swing overlay so the bag
+            // button and chips stay tappable (the overlay eats everything
+            // underneath it).
+            VStack {
+                hud
+                Spacer()
+                if engine.phase == .aiming { bottomBar }
             }
 
             if engine.phase == .shotResult, let outcome = engine.lastOutcome {
@@ -425,7 +436,8 @@ struct GameView: View {
                               carryYards: result.carryYards,
                               lateralYards: result.lateralYards,
                               flavor: result.flavor,
-                              apexScale: club.apexScale) { end, samples in
+                              apexScale: club.apexScale,
+                              rollFactor: CGFloat(club.rollFactor)) { end, samples in
                 engine.resolveLanding(kind: .meter(club), result: result,
                                       end: end, samples: samples)
             }
@@ -443,12 +455,15 @@ struct GameView: View {
             scene.strokeRelease(power: power) {
                 SoundFX.play(result.flavor == .chunk ? "mishit" : "hit_chip",
                              volume: 0.75)
+                // Chips release and run out — a bump-and-run rolls a
+                // healthy fraction of its carry on the green.
                 scene.animateShot(from: spot,
                                   aim: dir.rotated(by: angleError),
                                   carryYards: result.carryYards,
                                   lateralYards: 0,
                                   flavor: result.flavor,
-                                  apexScale: Club.sandWedge.apexScale) { end, samples in
+                                  apexScale: Club.sandWedge.apexScale,
+                                  rollFactor: 0.22) { end, samples in
                     engine.resolveLanding(kind: .chip, result: result,
                                           end: end, samples: samples)
                 }

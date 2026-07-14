@@ -66,6 +66,8 @@ final class MatchEngine: ObservableObject {
     var suggestedClub: Club {
         if currentLie == .green { return .putter }
         let d = distanceToPinYards
+        // Just off the green? Putt it — the Texas wedge is the percentage play.
+        if currentLie == .fringe && d <= 30 { return .putter }
         if d <= 50 { return .sandWedge }
         let needed = d / max(currentLie.distanceFactor, 0.4)
         for club in Club.bag.reversed() where club.maxYards >= needed * 0.97 {

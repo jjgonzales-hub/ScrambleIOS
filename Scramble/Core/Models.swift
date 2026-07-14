@@ -92,6 +92,21 @@ enum Club: String, CaseIterable, Equatable {
         }
     }
 
+    /// Rollout after landing, as a fraction of carry — low loft runs, high
+    /// loft checks up. Scaled again by the landing surface.
+    var rollFactor: Double {
+        switch self {
+        case .driver: return 0.10
+        case .wood3: return 0.09
+        case .iron5: return 0.075
+        case .iron7: return 0.06
+        case .iron9: return 0.05
+        case .pitchWedge: return 0.035
+        case .sandWedge: return 0.028
+        case .putter: return 0
+        }
+    }
+
     var shortLabel: String {
         switch self {
         case .driver: return "DR"

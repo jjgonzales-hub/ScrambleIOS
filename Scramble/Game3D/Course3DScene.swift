@@ -51,7 +51,7 @@ final class Course3DScene: NSObject {
     // as an actual golf swing instead of a flat fan.
     private static let backswingPose = SCNVector3(-0.35, -0.95, 2.15)
     private static let followPose = SCNVector3(-0.5, 1.05, -2.5)
-    private static let puttBackPose = SCNVector3(0, -0.12, 0.5)
+    private static let puttBackPose = SCNVector3(0, -0.15, 0.62)
 
     // MARK: - Simulation state (2D hole coords, main thread only)
 
@@ -649,8 +649,10 @@ final class Course3DScene: NSObject {
     /// water-entry detection, with height added as a parabola for the arc.
     func animateShot(from: CGPoint, aim: CGVector, carryYards: Double,
                      lateralYards: Double, flavor: ShotFlavor, apexScale: CGFloat,
+                     rollFactor: CGFloat,
                      completion: @escaping (CGPoint, [CGPoint]) -> Void) {
         removePreview()
+        clearTracer()
         ball2D = from
         ballRest = 0.45
 
@@ -670,8 +672,22 @@ final class Course3DScene: NSObject {
             samples.append(quadPoint(t: t, p0: from, c: control, p1: end))
         }
 
+        // Rollout: club loft × landing surface. Greens and firm fairway
+        // release the ball; rough and sand kill it dead.
         let grounded = flavor == .topped || flavor == .chunk || flavor == .fat
-        let roll = grounded ? aimU * 8 : aimU * (d * 0.05)
+        let surface: CGFloat
+        switch hole.lie(at: end) {
+        case .green: surface = 1.35
+        case .fringe: surface = 1.15
+        case .fairway, .tee: surface = 1.0
+        case .rough: surface = 0.45
+        case .trees: surface = 0.35
+        case .bunker: surface = 0.08
+        case .water: surface = 1.0   // splash handles it
+        }
+        let rollDist = grounded ? 30 * surface
+                                : min(d * rollFactor * surface, 70)
+        let roll = aimU * rollDist
         var final = end + roll
         final.x = min(max(final.x, 42), hole.sceneSize.width - 42)
         final.y = min(max(final.y, 42), hole.sceneSize.height - 42)
@@ -685,7 +701,7 @@ final class Course3DScene: NSObject {
             apex: grounded ? 0 : max(6, d * 0.085 * apexScale),
             end: end,
             rollTarget: final,
-            rollDuration: 0.35,
+            rollDuration: min(0.25 + Double(rollDist) / 140, 0.9),
             completion: completion
         )
     }
@@ -852,7 +868,7 @@ final class Course3DScene: NSObject {
             let target = SCNVector3(pose.x * Float(amount),
                                     pose.y * Float(amount),
                                     pose.z * Float(amount))
-            let k = Float(1 - exp(-16 * dt))
+            let k = Float(1 - exp(-24 * dt))
             let e = swingNode.eulerAngles
             swingNode.eulerAngles = SCNVector3(e.x + (target.x - e.x) * k,
                                                e.y + (target.y - e.y) * k,
