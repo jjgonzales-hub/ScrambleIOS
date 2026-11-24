@@ -1,32 +1,73 @@
 import SwiftUI
-import SpriteKit
+import UIKit
 
-/// Muted, earthy cartoon palette — dark forest greens, olive, cream, tan.
-/// Cartoony shapes, understated colors. Nothing neon.
+/// Scramble palette: bright, friendly golf-course greens with a deep
+/// clubhouse green for surfaces, a warm gold for wins, coral for trouble.
 enum Palette {
-    static let ink = Color(hex: 0x171B12)       // near-black, green cast
-    static let card = Color(hex: 0x232B1C)      // dark olive surface
-    static let accent = Color(hex: 0x4CAF50)    // scramble green (style board)
-    static let cream = Color(hex: 0xF0EDE0)
-    static let fairway = Color(hex: 0x8FB35A)
-    static let sand = Color(hex: 0xC7A16B)
-    static let water = Color(hex: 0x6E97AC)
-    static let danger = Color(hex: 0xFF6B6B)   // coral (style board)
+    static let ink = Color(hex: 0x14241A)       // text on light surfaces
+    static let deep = Color(hex: 0x0E2419)      // app background
+    static let card = Color(hex: 0x17382A)      // raised surfaces
+    static let cardHi = Color(hex: 0x1F4A37)
+    static let accent = Color(hex: 0x7ED957)    // primary action
+    static let gold = Color(hex: 0xFFD27A)
+    static let cream = Color(hex: 0xF7F4EA)
+    static let fairway = Color(hex: 0x78BE55)
+    static let sand = Color(hex: 0xEBD29C)
+    static let water = Color(hex: 0x4F9BE0)
+    static let danger = Color(hex: 0xF0705E)
 }
 
-enum SceneColors {
-    static let ink = SKColor(hex: 0x171B12)
-    static let rough = SKColor(hex: 0x4F6B33)
-    static let deepRough = SKColor(hex: 0x3A5226)
-    static let fairway = SKColor(hex: 0x8FB35A)
-    static let fringe = SKColor(hex: 0x9CBE63)
-    static let green = SKColor(hex: 0xA9C871)
-    static let sand = SKColor(hex: 0xC7A16B)
-    static let water = SKColor(hex: 0x6E97AC)
-    static let outline = SKColor(hex: 0x2A3A1C)
-    static let ball = SKColor(hex: 0xF0EDE0)
-    static let accent = SKColor(hex: 0xEDE8D4)  // aim preview / highlights
-    static let flagRed = SKColor(hex: 0xB5533C)
+/// Dark rounded card used across menus and overlays.
+struct CardBackground: ViewModifier {
+    var radius: CGFloat = 22
+    func body(content: Content) -> some View {
+        content
+            .background(Palette.card, in: RoundedRectangle(cornerRadius: radius))
+            .overlay(RoundedRectangle(cornerRadius: radius).stroke(.white.opacity(0.08), lineWidth: 1))
+    }
+}
+
+/// Frosted overlay card for things drawn on top of the 3D course.
+struct OverlayCard: ViewModifier {
+    var radius: CGFloat = 24
+    func body(content: Content) -> some View {
+        content
+            .background(.ultraThinMaterial.opacity(0.9), in: RoundedRectangle(cornerRadius: radius))
+            .background(Palette.deep.opacity(0.55), in: RoundedRectangle(cornerRadius: radius))
+            .overlay(RoundedRectangle(cornerRadius: radius).stroke(.white.opacity(0.12), lineWidth: 1))
+            .shadow(color: .black.opacity(0.25), radius: 18, y: 8)
+    }
+}
+
+extension View {
+    func card(radius: CGFloat = 22) -> some View { modifier(CardBackground(radius: radius)) }
+    func overlayCard(radius: CGFloat = 24) -> some View { modifier(OverlayCard(radius: radius)) }
+}
+
+struct PrimaryButtonStyle: ButtonStyle {
+    var color: Color = Palette.accent
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(.headline, design: .rounded).weight(.heavy))
+            .foregroundStyle(Palette.ink)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 15)
+            .background(color, in: RoundedRectangle(cornerRadius: 16))
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+    }
+}
+
+struct SecondaryButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(.headline, design: .rounded).weight(.bold))
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 15)
+            .background(.white.opacity(configuration.isPressed ? 0.2 : 0.12),
+                        in: RoundedRectangle(cornerRadius: 16))
+    }
 }
 
 extension Color {
@@ -41,7 +82,7 @@ extension Color {
     }
 }
 
-extension SKColor {
+extension UIColor {
     convenience init(hex: UInt32) {
         self.init(
             red: CGFloat((hex >> 16) & 0xFF) / 255,

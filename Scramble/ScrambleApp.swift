@@ -10,30 +10,35 @@ struct ScrambleApp: App {
                 // "-demoHole" jumps straight onto the tee — used for quick
                 // simulator checks without tapping through setup.
                 if CommandLine.arguments.contains("-demoHole") {
-                    GameView(config: .demo()) { }
+                    GameView(config: .demo(), demo: true) { }
                 } else {
                     HomeView()
                 }
             }
             .environmentObject(app)
             .preferredColorScheme(.dark)
+            .tint(Palette.accent)
         }
     }
 }
 
 extension MatchConfig {
     static func demo() -> MatchConfig {
-        let players = [Player(name: "You", emoji: "🏌️"),
-                       Player(name: "Sam", emoji: "🧢"),
-                       Player(name: "Jake", emoji: "😎"),
-                       Player(name: "Riley", emoji: "🦩")]
+        let players = [Player(name: "You", emoji: "🏌️", character: "male_a"),
+                       Player(name: "Sam", emoji: "🧢", character: "female_b"),
+                       Player(name: "Jake", emoji: "😎", character: "male_e"),
+                       Player(name: "Riley", emoji: "🦩", character: "female_d")]
+        let args = CommandLine.arguments
+        let start = args.firstIndex(of: "-demoHoleIndex").flatMap { i in
+            i + 1 < args.count ? Int(args[i + 1]) : nil } ?? 0
+        let holes = Array(Hole.course.dropFirst(min(start, Hole.course.count - 1)))
         return MatchConfig(
             teams: [Team(name: "You & Sam", players: [players[0], players[1]],
-                         colorHex: 0x6E97AC),
+                         colorHex: 0x4F9BE0),
                     Team(name: "Jake & Riley", players: [players[2], players[3]],
-                         colorHex: 0xB5533C)],
+                         colorHex: 0xF0705E)],
             wager: 100,
-            hole: .one()
+            holes: holes
         )
     }
 }
@@ -53,7 +58,9 @@ final class AppState: ObservableObject {
         }
     }
 
-    func apply(_ summary: HoleSummary) {
-        coins = max(0, coins + summary.userTotal)
+    /// The wager was escrowed when the match started: give it back, then
+    /// apply the net result and bonuses.
+    func settle(_ summary: MatchSummary) {
+        coins = max(0, coins + summary.wager + summary.userTotal)
     }
 }

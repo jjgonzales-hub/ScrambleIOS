@@ -1,105 +1,124 @@
 # ⛳️ Scramble
 
-2v2 turn-based cartoon golf for the group chat. Real scramble rules — both
+2v2 turn-based golf for the group chat. Real scramble rules: both
 teammates hit, the team picks the best ball, both hit again from there.
-Lowest score wins the pot, and every shot generates trash talk ready to
-paste into the chat.
+Three holes, lowest total takes the pot, and every shot generates trash
+talk ready to paste into the chat.
 
-**This is v0.1 — the core game loop**, built to get the swing feel right
-before anything else:
+The end goal is an iMessage game (GamePigeon-style) where your partner
+takes their swing whenever they pick up their phone. Today it's
+pass-and-play on one phone, with the game state kept separate from the
+renderer so the iMessage version can pass it between phones.
 
-- 🏌️ **Two-tap swing meter** (MLB The Show style) for driver and iron —
-  tap to lock power on the rising bar, tap again as the diamond crosses the
-  center line. Early = hook, late = slice, way off = topped/fat. Perfect
-  timing on both = distance bonus.
-- 🤏 **Pull-back-and-flick** chips and putts with a live trajectory preview.
-  Chips can be chunked. Putts obey green slope, can lip out, and missing a
-  short one stings through the haptics.
-- 🌬️ **Wind** displayed before every shot and factored into the result.
-- 🏆 **Full scramble flow** — 4 players pass-and-play, pick-the-best-ball
-  after each round of team shots, water penalties with drops, mercy rule at 8.
-- 💰 **Coin wagering** — Friendly (100) / Stakes (500) / High Roller (2000) /
-  Custom. Winner takes the pot, plus bonuses for birdies (50), eagles (150),
-  clutch 20ft+ putts (75), longest drive (100), match win (500). Bank
-  persists between launches.
-- 💬 **Trash-talk share sheet** after every shot and at hole end.
-- 📳 Haptics everywhere: light tap on power lock, heavy snap on accuracy
-  lock, triple-thud rumble on mishits, celebration pattern on holed putts.
+## What's in it (v0.8)
 
-**Art direction:** cartoony but understated — muted earthy palette (dark
-forest greens, olive, cream, tan), soft dark outlines, and restrained
-animation. Feedback comes as gentle ripples, small squash-and-stretch, and
-haptics rather than confetti and emoji bursts. All colors live in
-`Theme.swift` (`Palette` for SwiftUI, `SceneColors` for SpriteKit).
+- **Golf Dreams-style one-motion swing** for every club. Pull down and the
+  golfer's backswing follows your finger. Push back up and the ball is
+  struck as your finger passes the start point. Backswing length is the
+  power (exponential). Sideways drift going back and coming through bends
+  the shot (hook/slice). A live carry readout and a landing ring in the
+  world show what a partial swing will do. Haptic ticks every quarter.
+- **Real ball physics** (`Core/BallPhysics.swift`): gravity, drag, lift from
+  backspin, side spin, wind you can watch move the ball, surface-dependent
+  bounces with wedge check-up, rolling friction per lie, green slope,
+  branches that knock balls down, honest cup capture with lip-outs, and
+  chip-ins with the flag in. Every shot is simulated up front. The tracer,
+  putt read and landing are exactly what the ball does.
+- **Putting**: pendulum stroke, where stroke length is the pace. The green
+  shows a flowing slope grid, and the read line shows the first part of the
+  real roll. You still have to read the rest.
+- **3-hole course**: The Opener (par 4), Glass Pond (par 3 over water),
+  The Long Way Home (par 5 dogleg). Flyover intro, running scorecard,
+  honors, farthest-from-the-hole plays first.
+- **Art**: Kenney Mini Characters (13 golfers, CC0) posed procedurally
+  into a golf stance and swing. Kenney Nature Kit forests (CC0) merged into
+  a few draw calls. Smooth terrain with mowing stripes, water, bloom and
+  soft shadows.
+- **Coins**: the wager is held at tee-off. Winner takes the pot, plus
+  bonuses for birdies/eagles, clutch 20ft+ putts and the longest drive.
 
-## Building (requires a Mac)
-
-The project uses [XcodeGen](https://github.com/yonaskolb/XcodeGen):
+## Building (Mac)
 
 ```sh
 brew install xcodegen
-cd Scramble
 xcodegen generate
 open Scramble.xcodeproj
 ```
 
-No XcodeGen? Create a new iOS App project in Xcode named `Scramble`
-(SwiftUI, iOS 17+), delete the template `ContentView.swift`/`App.swift`,
-and drag the `Scramble/` source folder in.
+Run on a real device for haptics.
 
-**Run it on a real device.** The swing meter is tuned around haptics and
-they don't exist in the simulator.
+### Debug launch arguments
+
+| Arg | Does |
+|---|---|
+| `-demoHole` | Skip the menus, start a match (no coins) |
+| `-demoHoleIndex N` | Start on hole N (0-based) |
+| `-skipIntro` | Skip the flyover |
+| `-demoPutt` | Drop the ball on the green |
+| `-demoSwing` | Auto-play one scripted swing |
+| `-autoplay` | Bot plays the whole match through the real UI (logs every shot) |
+| `-fast` | 3× game speed (pair with `-autoplay`) |
+
+`xcrun simctl launch <sim> com.jjgonzales.scramble -demoHole -autoplay -fast`
+plays a full match in about two minutes.
 
 ## Project layout
 
 ```
 Scramble/
-├─ ScrambleApp.swift          App entry + coin bank (AppState)
-├─ Theme.swift                Palette + CGPoint/CGVector math helpers
-├─ Core/
-│  ├─ Models.swift            Player, Team, Club, Lie, Wind, ShotOutcome…
-│  ├─ HoleModel.swift         Hole geometry + lie detection (2pts = 1yd)
-│  ├─ ShotEngine.swift        Power + accuracy + wind → shot result
-│  ├─ MatchEngine.swift       Scramble turn flow, wagering, settlement
-│  ├─ TrashTalk.swift         Auto-generated group chat messages
-│  └─ Haptics.swift           The feel
-├─ Game/
-│  ├─ CourseScene.swift       SpriteKit: course render, ball flight, putt sim
-│  ├─ GameView.swift          SwiftUI shell wiring scene ↔ engine ↔ inputs
-│  ├─ SwingMeterView.swift    Two-tap meter (model + view)
-│  ├─ FlickOverlay.swift      Pull-back gesture for chips/putts
-│  ├─ ResultBanner.swift      Post-shot reaction card
-│  ├─ PickBallView.swift      Best-ball picker
-│  └─ ShareSheet.swift        UIActivityViewController wrapper
-└─ Screens/
-   ├─ HomeView.swift          Coin balance + quick match
-   ├─ MatchSetupView.swift    Players, wager, tee off
-   └─ HoleCompleteView.swift  Scorecard + settlement
+├─ ScrambleApp.swift          App entry, coin bank (AppState), demo config
+├─ Theme.swift                Palette, card/button styles, vector math
+├─ Art/                       Golfers.usdz, Props.usdz (+ Kenney licenses)
+├─ Core/                      Pure game logic, no rendering
+│  ├─ Models.swift            Player, Team, Club, Lie, Wind, outcomes
+│  ├─ HoleModel.swift         The 3 holes, lie map, caddie aim targets
+│  ├─ BallPhysics.swift       Flight / bounce / roll / cup simulation
+│  ├─ ShotEngine.swift        Swing → strike quality, carry, curve
+│  ├─ MatchEngine.swift       Scramble turn flow, scorecard, settlement
+│  ├─ TrashTalk.swift         Group chat lines
+│  ├─ Haptics.swift / SoundFX.swift
+├─ Game3D/
+│  ├─ Course3DScene.swift     Terrain, forest, water, pin, camera, playback
+│  ├─ GolferRig.swift         Procedural golfer posing + swing
+│  ├─ SwingGestureOverlay.swift  The one-motion swing input
+│  ├─ MeshMerger.swift        Bakes props into a few draw calls
+│  └─ CharacterPortrait.swift Menu portraits
+├─ Game/                      GameView (HUD + flow), result/pick cards
+└─ Screens/                   Home, match setup, scorecard, match complete
+tools/assets/                 Blender scripts that build the .usdz files
 ```
 
-## Tuning the feel
+## Tuning
 
-All the numbers that matter live in a few places:
-
-| What | Where |
+| Feel | Where |
 |---|---|
-| Power bar rise speed, accuracy sweep speed | `SwingMeterModel.powerRiseTime` / `accuracySweepTime` |
-| Accuracy → result tiers (95/80/60/40) | `ShotRating.init(accuracyPct:)` |
-| Distance factors per tier | `ShotRating.distanceFactor` |
-| Curve severity | `Club.curveYards` + the `pow(…, 1.2)` in `ShotEngine.meterShot` |
-| Wind strength | the `0.9` / `0.55` multipliers in `ShotEngine.meterShot` |
-| Putt speed/friction | `480` (max velocity) in `GameView.executeFlick`, `1.9` (friction) in `CourseScene.update` |
-| Chunk chance on hard chips | `ShotEngine.chip` |
+| Swing power curve | `exp(2.3 × (pull − 1))` in `GameView.swingOverlay` / `fullCarry` |
+| Strike forgiveness | `pow(miss, 1.35)` + tiers in `ShotEngine.meterShot` / `ShotRating` |
+| Curve per club | `Club.curveYards` |
+| Launch angle / spin / check per club | `BallPhysics.launchProfile` |
+| Wind strength | `BallPhysics.windScale` |
+| Bounce + roll per surface | `BallPhysics.bounceResponse` / `rollFriction` |
+| Green speed | `BallPhysics.greenK` / `greenC`, slope per hole in `HoleModel` |
+| Cup capture / lip-outs | `cap` in `BallPhysics.simulate` |
+| Putt stroke → distance | `GameView.puttDistance` |
+| Camera framing | `Course3DScene.aim` / `updateCamera` |
 
-## Roadmap (v0.2+)
+## Regenerating art
 
-- 9 holes with varied par 3/4/5 layouts (the `Hole` struct is already
-  data-driven — add more `Hole.two()`, `Hole.three()`… factories)
-- Supabase: profiles, coins, match history, head-to-head records
-  ("Jake leads the all-time series 14-2"), realtime 4-player turn sync
-- Push notifications ("Jake is waiting on your shot")
-- iMessage extension so shots post directly into the thread
-- Shop: ball trails (fire/rainbow/money/ghost), club skins, outfits,
-  victory animations; StoreKit 2 coin packs
-- Stats screen: driving accuracy, clutch rating, chokes (3-putts inside 5ft)
-- Aim control before each shot (currently auto-aims at the pin)
+Source packs (CC0): Kenney Mini Characters and Kenney Nature Kit. With
+Blender installed:
+
+```sh
+/Applications/Blender.app/Contents/MacOS/Blender -b --factory-startup \
+  --python tools/assets/convert_chars.py -- Scramble/Art/Golfers.usdz character-*.glb
+/Applications/Blender.app/Contents/MacOS/Blender -b --factory-startup \
+  --python tools/assets/convert_props.py -- Scramble/Art/Props.usdz tree_*.glb ...
+```
+
+## Next up
+
+- iMessage extension: serialize `MatchEngine` into `MSMessage` URLs, one
+  turn per message
+- Locker: outfits/colors per golfer, ball trails
+- Punch and flop shots, club upgrades
+- More courses (the `Hole` struct is data-driven)

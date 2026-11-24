@@ -124,6 +124,22 @@ enum TrashTalk {
         return "\(winner) takes the hole\(scoreText) and \(pot) coins 💰 Pay up."
     }
 
+    /// Final line for the group chat after all three holes.
+    static func matchResult(winner: Int?, totals: [Int], teamNames: [String],
+                            pot: Int, par: Int) -> String {
+        func rel(_ s: Int) -> String {
+            let r = s - par
+            return r == 0 ? "E" : (r > 0 ? "+\(r)" : "\(r)")
+        }
+        guard let w = winner else {
+            return "All square after \(totals[0]) apiece (\(rel(totals[0]))). Pot goes back. Rematch?"
+        }
+        let l = 1 - w
+        let margin = totals[l] - totals[w]
+        let flavor = margin >= 3 ? "Absolute beatdown." : (margin == 1 ? "By ONE stroke." : "Not close.")
+        return "\(teamNames[w]) win the scramble \(totals[w])–\(totals[l]) (\(rel(totals[w]))) and take the \(pot)-coin pot 💰 \(flavor) \(teamNames[l]), pay up."
+    }
+
     static func scoreName(_ relativeToPar: Int) -> String? {
         switch relativeToPar {
         case ...(-3): return "Albatross"

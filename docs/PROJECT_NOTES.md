@@ -32,6 +32,41 @@ shot generates a trash-talk message to share into the chat.
 - Trash-talk share sheet after every shot and at hole end
 - Haptics on power lock, accuracy lock, mishits, holed putts
 
+## v0.8 — "make it a real game" pass (2026-11-23)
+
+JJ: "the game looks like shit and plays like shit". Wants Golf Dreams-feel
+swing and putting, a polished look, and a 3-hole scramble as the
+iMessage/GamePigeon end state. Chose free CC0 asset packs for the art.
+
+- **Real physics** replaced the canned bezier-plus-parabola flight and
+  linear roll (`Core/BallPhysics.swift`). Launch is solved so still-air
+  carry and curve match the swing, then the ball flies through the wind.
+  Driver: 265 yd carry, ~90 ft apex, 5.5 s hang.
+- **Cup was ~10 ft wide** (cupRadius 7 pts), and a lip-out bug meant any putt
+  reaching the cup dropped. Now a 1.8-pt gameplay cup, pace/line-aware
+  capture, real lip-outs, and the flag in for chips.
+- **Swing commits as the finger passes back through the start** (no lift
+  needed). The pill shows projected carry, and a landing ring moves with
+  the pull. The accuracy curve was inverted (pow 0.82 made small misses
+  worse): now pow 1.35.
+- **3 holes** with tree corridors following the fairway (doglegs work),
+  honors, farthest-out plays first, a running scorecard, and match
+  settlement. Wager held at tee-off.
+- **Art**: Kenney Mini Characters (procedurally posed: bend, coil, hip turn,
+  head still, trail heel, celebrate/dejected) and Kenney Nature Kit forests.
+  Assets are converted with Blender scripts in tools/assets (Y-up baked
+  into the data). SceneKit's flattenedClone returns EMPTY geometry for
+  USD meshes, and USD index buffers have 3 interleaved channels.
+  MeshMerger handles both.
+- Dropped the notebook-paper UI experiment for one consistent dark-green
+  and frosted-card style across every screen.
+- Deleted the legacy 2D files (CourseScene, FlickOverlay, SwingMeter,
+  ElasticGesture, HoleCompleteView).
+- `-autoplay -fast` bot plays a full match through the real UI. Use it after
+  any change to the flow.
+- Not yet validated on a device: swing feel, haptics, and performance with
+  ~1,200 trees (one draw call per material).
+
 ## v0.2 direction — first on-device playtest feedback (2026-07-01)
 
 JJ played v0.1 on a real iPhone. Verdict: core meter is fun, everything else

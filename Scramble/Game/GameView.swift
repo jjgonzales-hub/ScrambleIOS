@@ -6,159 +6,74 @@ struct GameView: View {
 
     @EnvironmentObject private var app: AppState
     @StateObject private var engine: MatchEngine
-    @State private var scene: Course3DScene
+    @State private var scene: Course3DScene?
     @State private var showShare = false
-    @State private var pendingPuttStartFt = 0
-    @State private var coinsApplied = false
     @State private var showBag = false
     @State private var aimOffset = 0.0
     @State private var aimDragStart: Double?
+    @State private var escrowed = false
+    @State private var settled = false
+    @State private var confirmQuit = false
+    @State private var turnBanner: String?
+    @State private var shape: ShotShape = .straight
+    @State private var readView = false
+    /// Partner's putt this round, left on the green as the read.
+    @State private var partnerRead: (path: [CGPoint], color: UInt32, name: String)?
+    /// Full-stroke distance for this putt (pts) — scales with the putt so
+    /// short ones get fine control.
+    @State private var puttRange: CGFloat = 60
 
-    /// Live aim line: the pin line rotated by the player's aim adjustment.
+    enum ShotShape: String, CaseIterable { case draw = "Draw", straight = "Straight", fade = "Fade" }
+
+    private let demoMode: Bool
+
+    /// Live aim line: the caddie line rotated by the player's adjustment.
     private var aimU: CGVector {
         engine.aimDirection.rotated(by: CGFloat(aimOffset))
     }
 
-    init(config: MatchConfig, onExit: @escaping () -> Void) {
+    init(config: MatchConfig, demo: Bool = false, onExit: @escaping () -> Void) {
         self.onExit = onExit
-        _engine = StateObject(wrappedValue: MatchEngine(config: config))
-        _scene = State(initialValue: Course3DScene(hole: config.hole))
+        self.demoMode = demo
+        let engine = MatchEngine(config: config)
+        _engine = StateObject(wrappedValue: engine)
     }
 
     var body: some View {
         ZStack {
-            Palette.ink.ignoresSafeArea()
+            Color(hex: 0x8EC3EC).ignoresSafeArea()
 
-            SceneView(scene: scene.scene, pointOfView: scene.cameraNode, options: [])
-                .ignoresSafeArea()
-
-            // One-motion swing for every club (Golf Dreams style).
-            // Full shots: drift = shot shape (hook/slice).
-            // Chips/putts: drift = AIM, so you can play the break; the
-            // putt preview bends with the green's slope as you pull.
-            if engine.phase == .aiming {
-                switch engine.currentKind {
-                case .meter:
-                    SwingGestureOverlay(
-                        mode: .full,
-                        label: { b in "\(Int(b * 100))" },
-                        onPull: { b, _ in scene.setBackswing(CGFloat(b)) },
-                        onSwing: { b, aimDrift, shapeDrift, upSpeed in
-                            // Golf Dreams power model (dev-confirmed):
-                            // backswing length is the power and it's
-                            // EXPONENTIAL — margins are small. Swipe speed
-                            // is only a ±4% tempo nudge.
-                            let tempo = 0.96 + 0.08 * min(upSpeed / 2600, 1)
-                            let power = min(exp(2.3 * (b - 1)) * tempo, 1.04)
-                            // Face control from BOTH phases, like Golf
-                            // Dreams: drift going back counts at 40%,
-                            // drift through impact at full weight.
-                            let backDrift = aimDrift - shapeDrift
-                            let earlyLate = min(max(shapeDrift + 0.4 * backDrift,
-                                                    -1), 1)
-                            executeMeterShot(power: power, earlyLate: earlyLate)
-                        },
-                        onCancel: { scene.setBackswing(nil) }
-                    )
-                case .chip, .putt:
-                    let isPutt = engine.currentKind == .putt
-                    SwingGestureOverlay(
-                        mode: isPutt ? .putt : .chip,
-                        label: { b in
-                            flickLabel(power: isPutt ? puttPower(b)
-                                                     : chipPower(b, upSpeed: nil))
-                        },
-                        onPull: { b, aimDrift in
-                            // Golf Dreams 1:1 takeaway: chips mirror the
-                            // finger with a real half-backswing; putts use
-                            // the pendulum stroke.
-                            if isPutt {
-                                scene.setPullback(CGFloat(b))
-                            } else {
-                                scene.setBackswing(CGFloat(b) * 0.55)
-                            }
-                            let dir = aimedDirection(drift: aimDrift)
-                            if isPutt {
-                                scene.showPuttPreview(from: engine.currentSpot,
-                                                      direction: dir,
-                                                      power: puttPower(b))
-                            } else {
-                                scene.showPreview(from: engine.currentSpot,
-                                                  direction: dir,
-                                                  power: chipPower(b, upSpeed: nil),
-                                                  isPutt: false)
-                            }
-                        },
-                        onSwing: { b, aimDrift, _, upSpeed in
-                            // Putting is pure pendulum: stroke length IS
-                            // the pace, no flick multiplier — so the read
-                            // line is the literal truth and short putts
-                            // are finesse, not reflexes. Chips use the
-                            // same exponential model as full swings.
-                            let power = isPutt
-                                ? max(puttPower(b), 0.015)
-                                : chipPower(b, upSpeed: upSpeed)
-                            executeFlick(dir: aimedDirection(drift: aimDrift),
-                                         power: power)
-                        },
-                        onCancel: {
-                            scene.setPullback(nil)
-                            scene.setBackswing(nil)
-                            scene.removePreview()
-                        }
-                    )
-                }
+            if let scene {
+                SceneView(scene: scene.scene, pointOfView: scene.cameraNode,
+                          options: [], preferredFramesPerSecond: 60,
+                          antialiasingMode: .multisampling4X)
+                    .id(engine.holeIndex)
+                    .ignoresSafeArea()
+                    .transition(.opacity)
+            } else {
+                loadingCard
             }
 
-            // Aim strip — drag horizontally across the top of the screen to
-            // rotate the aim line (Golf Dreams: pick your line against the
-            // wind). Sits above the swing overlay so it wins up here.
-            if engine.phase == .aiming {
-                VStack(spacing: 4) {
-                    Text("‹ drag to aim ›")
-                        .font(.system(.caption2, design: .rounded).bold())
-                        .foregroundStyle(Palette.cream.opacity(0.45))
-                        .padding(.top, 96)
-                    Color.clear
-                        .frame(height: 150)
-                        .contentShape(Rectangle())
-                        .gesture(
-                            DragGesture(minimumDistance: 2)
-                                .onChanged { g in
-                                    if aimDragStart == nil { aimDragStart = aimOffset }
-                                    aimOffset = min(max((aimDragStart ?? 0)
-                                        - Double(g.translation.width) * 0.0011,
-                                        -0.55), 0.55)
-                                    scene.aim(spot: engine.currentSpot, aimDir: aimU,
-                                              kind: engine.currentKind, animated: false)
-                                    if engine.currentKind == .putt {
-                                        scene.showPuttPreview(from: engine.currentSpot,
-                                                              direction: aimU,
-                                                              power: puttPower(0.5))
-                                    } else {
-                                        scene.showPreview(from: engine.currentSpot,
-                                                          direction: aimU, power: 0.55,
-                                                          isPutt: false)
-                                    }
-                                }
-                                .onEnded { _ in
-                                    aimDragStart = nil
-                                    scene.removePreview()
-                                }
-                        )
-                    Spacer()
-                }
-                .ignoresSafeArea()
-            }
+            if engine.phase == .aiming && scene != nil { swingOverlay }
+            if engine.phase == .aiming && scene != nil { aimStrip }
 
-            // HUD + bottom bar sit ABOVE the swing overlay so the bag
-            // button and chips stay tappable (the overlay eats everything
-            // underneath it).
-            VStack {
+            VStack(spacing: 0) {
                 hud
                 Spacer()
-                if engine.phase == .aiming { bottomBar }
+                if engine.phase == .aiming { bottomBar.transition(.move(edge: .bottom).combined(with: .opacity)) }
             }
+            .animation(.easeOut(duration: 0.25), value: engine.phase)
+
+            if let banner = turnBanner {
+                Text(banner)
+                    .font(.system(size: 30, weight: .black, design: .rounded))
+                    .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(0.35), radius: 6, y: 2)
+                    .transition(.scale(scale: 0.9).combined(with: .opacity))
+                    .allowsHitTesting(false)
+            }
+
+            if engine.phase == .holeIntro && scene != nil { holeIntroCard }
 
             if engine.phase == .shotResult, let outcome = engine.lastOutcome {
                 ResultBanner(outcome: outcome,
@@ -170,132 +85,427 @@ struct GameView: View {
                 PickBallView(engine: engine)
             }
 
-            if engine.phase == .holeComplete, let summary = engine.summary {
-                HoleCompleteView(summary: summary,
-                                 onShare: { showShare = true },
-                                 onExit: onExit)
+            if engine.phase == .holeComplete {
+                ScorecardView(engine: engine, final: false, onShare: nil,
+                              onContinue: { engine.startNextHole() })
+            }
+
+            if engine.phase == .matchComplete, let summary = engine.summary {
+                MatchCompleteView(engine: engine, summary: summary,
+                                  onShare: { showShare = true }, onExit: onExit)
             }
         }
         .statusBarHidden()
         .onAppear(perform: wire)
-        .onDisappear { scene.tearDown() }
+        .onDisappear { scene?.tearDown() }
         .onChange(of: engine.phase) { _, newPhase in handlePhaseChange(newPhase) }
-        .sheet(isPresented: $showShare) {
-            ShareSheet(text: shareText)
+        .onChange(of: engine.holeIndex) { _, _ in loadHoleScene() }
+        .sheet(isPresented: $showShare) { ShareSheet(text: shareText) }
+        .confirmationDialog("Leave the match?", isPresented: $confirmQuit, titleVisibility: .visible) {
+            Button("Forfeit \(engine.wager) coins and leave", role: .destructive, action: onExit)
+            Button("Keep playing", role: .cancel) {}
+        } message: {
+            Text("Your wager stays in the pot if you walk off.")
         }
     }
 
-    private var isFlickShot: Bool {
-        engine.currentKind == .chip || engine.currentKind == .putt
+    private var shareText: String {
+        if engine.phase == .matchComplete { return engine.summary?.chatLine ?? "" }
+        return engine.lastOutcome?.message ?? ""
     }
 
-    private var shareText: String {
-        if engine.phase == .holeComplete { return engine.summary?.chatLine ?? "" }
-        return engine.lastOutcome?.message ?? ""
+    // MARK: - Swing input
+
+    @ViewBuilder private var swingOverlay: some View {
+        let kind = engine.currentKind
+        switch kind {
+        case .meter(let club):
+            SwingGestureOverlay(
+                mode: .full,
+                label: { b in "\(Int(fullCarry(club: club, pull: b))) yd" },
+                onPull: { b, _ in
+                    scene?.setBackswing(CGFloat(b), kind: kind)
+                    previewFull(club: club, carry: fullCarry(club: club, pull: b))
+                },
+                onSwing: { b, aimDrift, shapeDrift, upSpeed in
+                    // Golf Dreams model: backswing length is the power and
+                    // it's exponential; swing speed is a ±4% tempo nudge.
+                    let tempo = 0.96 + 0.08 * min(upSpeed / 2400, 1)
+                    let power = min(exp(2.3 * (b - 1)) * tempo, 1.04)
+                    // Face from both phases: back drift at 40%, through
+                    // drift at full weight.
+                    let backDrift = aimDrift - shapeDrift
+                    let earlyLate = min(max(shapeDrift + 0.4 * backDrift, -1), 1)
+                    executeFullSwing(club: club, power: power, earlyLate: earlyLate)
+                },
+                onCancel: {
+                    scene?.setBackswing(nil, kind: kind)
+                    showDefaultAim()
+                }
+            )
+        case .chip, .putt:
+            let isPutt = kind == .putt
+            SwingGestureOverlay(
+                mode: isPutt ? .putt : .chip,
+                label: { b in
+                    isPutt ? "\(Int((puttDistance(b) / 2 * 3).rounded())) ft" : "\(Int(chipCarry(b))) yd"
+                },
+                onPull: { b, aimDrift in
+                    scene?.setBackswing(CGFloat(b), kind: kind)
+                    let dir = aimedDirection(drift: aimDrift)
+                    if isPutt {
+                        let tr = BallPhysics.putt(from: engine.currentSpot, direction: dir,
+                                                  speed: BallPhysics.puttSpeed(forDistance: puttDistance(b)),
+                                                  course: engine.hole.course)
+                        scene?.showPuttRead(tr, fraction: 0.8)
+                    } else {
+                        scene?.showAim(from: engine.currentSpot, direction: dir,
+                                      carryYards: chipCarry(b))
+                    }
+                },
+                onSwing: { b, aimDrift, _, _ in
+                    let dir = aimedDirection(drift: aimDrift)
+                    if isPutt {
+                        executePutt(dir: dir, distance: puttDistance(b), pull: b)
+                    } else {
+                        executeChip(dir: dir, carry: chipCarry(b), pull: b)
+                    }
+                },
+                onCancel: {
+                    scene?.setBackswing(nil, kind: kind)
+                    showDefaultAim()
+                }
+            )
+        }
+    }
+
+    /// Drag across the top of the screen to rotate the aim line.
+    private var aimStrip: some View {
+        VStack(spacing: 0) {
+            Color.clear
+                .frame(height: 230)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 3)
+                        .onChanged { g in
+                            if aimDragStart == nil { aimDragStart = aimOffset }
+                            let sens: Double
+                            switch engine.currentKind {
+                            case .putt: sens = 0.0006
+                            case .chip: sens = 0.001
+                            case .meter: sens = 0.0016
+                            }
+                            aimOffset = min(max((aimDragStart ?? 0)
+                                                - Double(g.translation.width) * sens, -0.7), 0.7)
+                            scene?.aim(spot: engine.currentSpot, aimDir: aimU,
+                                      kind: engine.currentKind, animated: true)
+                            showDefaultAim()
+                        }
+                        .onEnded { _ in aimDragStart = nil }
+                )
+            Spacer()
+        }
+        .ignoresSafeArea()
+    }
+
+    // MARK: - Power models
+
+    /// Still-air carry for a full swing at this backswing (what the pill
+    /// and landing ring show).
+    private func fullCarry(club: Club, pull: Double) -> Double {
+        club.maxYards * exp(2.3 * (pull - 1)) * engine.currentLie.distanceFactor
+    }
+
+    private func chipCarry(_ pull: Double) -> Double {
+        let carry = 62 * pow(pull, 1.5) * engine.currentLie.distanceFactor
+        return max(carry, 1)
+    }
+
+    /// Flat-green roll distance (pts) for a putting stroke. The full
+    /// stroke covers `puttRange`, which scales with the putt's length, so a
+    /// 4-footer and a 40-footer both use a comfortable amount of thumb.
+    private func puttDistance(_ pull: Double) -> CGFloat {
+        0.5 + puttRange * CGFloat(pow(pull, 1.3))
+    }
+
+    private func puttPull(forDistance d: CGFloat) -> Double {
+        pow(Double(max(d - 0.5, 0.01) / puttRange), 1 / 1.3)
+    }
+
+    /// Sideways thumb drift nudges the line: barely on putts (aim with the
+    /// top-of-screen drag instead), a little on chips.
+    private func aimedDirection(drift: Double) -> CGVector {
+        let k: Double = engine.currentKind == .putt ? 0.05 : 0.2
+        return aimU.rotated(by: CGFloat(-drift * k))
+    }
+
+    /// Intentional curve for draw/fade, in yards (+ = right).
+    private func shapeCurve(_ club: Club) -> Double {
+        let amount = max(4, club.curveYards * 0.32)
+        switch shape {
+        case .draw: return -amount
+        case .straight: return 0
+        case .fade: return amount
+        }
+    }
+
+    /// Start line for a shaped shot: aim away from the curve so it bends
+    /// back onto the target line.
+    private func startLine(club: Club, carry: Double) -> CGVector {
+        aimU.rotated(by: CGFloat(shapeCurve(club) / max(carry, 1)))
+    }
+
+    private func previewFull(club: Club, carry: Double) {
+        guard shape != .straight else {
+            scene?.showAim(from: engine.currentSpot, direction: aimU, carryYards: carry)
+            return
+        }
+        let tr = BallPhysics.strike(from: engine.currentSpot, aim: startLine(club: club, carry: carry),
+                                    club: club, carryYards: carry, lateralYards: shapeCurve(club),
+                                    grounded: false, wind: Wind(speed: 0, angle: 0),
+                                    course: engine.hole.course)
+        scene?.showFlightPreview(tr, from: engine.currentSpot)
+    }
+
+    // MARK: - Green reading
+
+    /// Plain-English read of the putt: uphill/downhill and which way it
+    /// breaks, from the slope along the line to the hole.
+    private var puttRead: String {
+        let spot = engine.currentSpot, pin = engine.hole.pin
+        let dir = CGVector(from: spot, to: pin).normalized
+        var avg = CGVector.zero
+        for i in 0..<10 {
+            let t = (CGFloat(i) + 0.5) / 10
+            avg = avg + engine.hole.slope(at: CGPoint(x: spot.x + (pin.x - spot.x) * t,
+                                                      y: spot.y + (pin.y - spot.y) * t)) * 0.1
+        }
+        let along = avg.dot(dir), side = avg.dot(dir.perpendicularRight)
+        let hill: String
+        switch along {
+        case ..<(-2.4): hill = "Uphill"
+        case ..<(-0.8): hill = "Slightly uphill"
+        case ..<0.8: hill = "Flat"
+        case ..<2.4: hill = "Slightly downhill"
+        default: hill = "Downhill"
+        }
+        let breakText: String
+        switch abs(side) {
+        case ..<1.0: breakText = "straight"
+        case ..<3.2: breakText = side > 0 ? "a little right" : "a little left"
+        default: breakText = side > 0 ? "big break right" : "big break left"
+        }
+        return "\(hill) · \(breakText)"
+    }
+
+    /// What's riding on this putt, when it matters.
+    private var stakesText: String? {
+        guard engine.currentKind == .putt else { return nil }
+        let t = engine.activeTeam, o = 1 - t
+        guard engine.holedOut[o] else { return nil }
+        if engine.isLastHole {
+            let mine = engine.total(team: t) + 1, theirs = engine.total(team: o)
+            if mine < theirs { return "MAKE IT TO WIN THE MATCH" }
+            if mine == theirs { return "MAKE IT TO TIE THE MATCH" }
+        }
+        let mine = engine.strokes[t] + 1, theirs = engine.strokes[o]
+        if mine < theirs { return "MAKE IT TO WIN THE HOLE" }
+        if mine == theirs { return "MAKE IT TO HALVE THE HOLE" }
+        return nil
     }
 
     // MARK: - HUD
 
     private var hud: some View {
         VStack(spacing: 8) {
-            HStack {
-                Label("Hole \(engine.hole.number) • Par \(engine.hole.par) • \(engine.hole.yards) yds",
-                      systemImage: "flag.fill")
-                    .font(.system(.footnote, design: .rounded).bold())
-                    .foregroundStyle(Palette.cream)
+            HStack(alignment: .top) {
+                Button { confirmQuit = true } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 32, height: 32)
+                        .background(.black.opacity(0.28), in: Circle())
+                }
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("HOLE \(engine.hole.number) · PAR \(engine.hole.par)")
+                        .font(.system(.subheadline, design: .rounded).weight(.heavy))
+                    Text("\(engine.hole.name) · \(engine.hole.yards) yd")
+                        .font(.system(.caption2, design: .rounded).weight(.semibold))
+                        .opacity(0.85)
+                }
+                .foregroundStyle(.white)
+                .shadow(color: .black.opacity(0.3), radius: 3, y: 1)
                 Spacer()
                 windBadge
             }
-
-            HStack {
+            HStack(spacing: 8) {
                 scoreChip(team: 0)
-                Spacer()
                 scoreChip(team: 1)
+                Spacer()
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 8)
+        .padding(.horizontal, 14)
+        .padding(.top, 10)
     }
 
     private var windBadge: some View {
-        HStack(spacing: 5) {
+        // Arrow relative to where you're aiming: up = helping, down = into you.
+        let aimAngle = atan2(Double(aimU.dy), Double(aimU.dx))
+        let rel = engine.wind.angle - aimAngle
+        return VStack(spacing: 2) {
             Image(systemName: "location.north.fill")
-                .font(.caption)
-                .rotationEffect(.radians(.pi / 2 - engine.wind.angle))
-            Text("\(engine.wind.speed) MPH")
-                .font(.system(.footnote, design: .rounded).bold())
+                .font(.system(size: 18, weight: .bold))
+                .rotationEffect(.radians(-rel))
+                .opacity(engine.wind.speed == 0 ? 0.3 : 1)
+            Text("\(engine.wind.speed) mph")
+                .font(.system(.caption, design: .rounded).weight(.heavy))
+                .monospacedDigit()
         }
-        .foregroundStyle(engine.wind.speed > 8 ? Palette.danger : Palette.cream)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .background(Palette.card.opacity(0.9), in: Capsule())
+        .foregroundStyle(engine.wind.speed >= 10 ? Color(hex: 0xFFD27A) : .white)
+        .frame(width: 62, height: 54)
+        .background(.black.opacity(0.28), in: RoundedRectangle(cornerRadius: 14))
     }
 
     private func scoreChip(team: Int) -> some View {
-        HStack(spacing: 6) {
-            Circle()
-                .fill(Color(hex: engine.teams[team].colorHex))
-                .frame(width: 10, height: 10)
-            Text("\(engine.teams[team].name)  \(engine.strokes[team])")
-                .font(.system(.footnote, design: .rounded).bold())
-                .foregroundStyle(
-                    engine.activeTeam == team ? Palette.accent : Palette.cream.opacity(0.7)
-                )
+        let total = engine.total(team: team)
+        let par = engine.parThrough(holes: engine.holeIndex)
+            + (engine.holedOut[team] ? engine.hole.par : 0)
+        let rel = total - par
+        let relText = engine.holeIndex == 0 && !engine.holedOut[team]
+            ? "E" : (rel == 0 ? "E" : (rel > 0 ? "+\(rel)" : "\(rel)"))
+        return HStack(spacing: 6) {
+            Circle().fill(Color(hex: engine.teams[team].colorHex)).frame(width: 9, height: 9)
+            Text(engine.teams[team].name)
+                .font(.system(.caption, design: .rounded).weight(.bold))
+                .lineLimit(1)
+            Text("\(engine.strokes[team])")
+                .font(.system(.caption, design: .rounded).weight(.heavy))
+                .monospacedDigit()
+                .padding(.horizontal, 6)
+                .padding(.vertical, 1)
+                .background(.white.opacity(0.2), in: Capsule())
+            Text(relText)
+                .font(.system(.caption2, design: .rounded).weight(.heavy))
+                .opacity(0.8)
         }
+        .foregroundStyle(.white)
         .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .background(Palette.card.opacity(0.9), in: Capsule())
+        .padding(.vertical, 6)
+        .background(.black.opacity(engine.activeTeam == team ? 0.42 : 0.22), in: Capsule())
+        .overlay(Capsule().stroke(engine.activeTeam == team ? .white.opacity(0.7) : .clear, lineWidth: 1.5))
     }
 
     private var bottomBar: some View {
         VStack(spacing: 10) {
+            if let stakes = stakesText {
+                Text(stakes)
+                    .font(.system(.subheadline, design: .rounded).weight(.black))
+                    .foregroundStyle(Palette.ink)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+                    .background(Palette.gold, in: Capsule())
+            }
             if showBag { bagRow }
+            if case .meter = engine.currentKind { shapeRow }
+            if engine.currentKind == .putt { puttRow }
+            HStack(alignment: .center, spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(engine.currentPlayer.name)
+                        .font(.system(.headline, design: .rounded).weight(.heavy))
+                    Text(engine.currentLie.label.uppercased())
+                        .font(.system(.caption2, design: .rounded).weight(.bold))
+                        .opacity(0.75)
+                }
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-            HStack(spacing: 10) {
-                Text("\(engine.currentPlayer.emoji) \(engine.currentPlayer.name)")
-                    .font(.system(.headline, design: .rounded).bold())
-                    .foregroundStyle(Palette.cream)
-                Text(engine.currentLie.label.uppercased())
-                    .font(.system(.caption, design: .rounded).bold())
-                    .foregroundStyle(Palette.cream.opacity(0.65))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(Palette.ink.opacity(0.6), in: Capsule())
-
-                // The bag — tap to choose a club, Golf Dreams style.
-                // Carry yardage is how you judge distance; no meter.
                 Button {
                     withAnimation(.spring(duration: 0.25)) { showBag.toggle() }
                 } label: {
-                    HStack(spacing: 4) {
-                        Text(clubChipLabel)
-                            .font(.system(.caption, design: .rounded).bold())
-                        Image(systemName: showBag ? "chevron.down" : "chevron.up")
-                            .font(.system(size: 9, weight: .heavy))
+                    VStack(spacing: 0) {
+                        Text(engine.currentClub.shortLabel)
+                            .font(.system(size: 22, weight: .black, design: .rounded))
+                        Text(engine.currentClub == .putter ? "PUTTER" : "\(Int(engine.currentClub.maxYards)) YD")
+                            .font(.system(size: 10, weight: .heavy, design: .rounded))
+                            .opacity(0.75)
                     }
                     .foregroundStyle(Palette.ink)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 4)
-                    .background(Palette.accent.opacity(0.92), in: Capsule())
+                    .frame(width: 74, height: 56)
+                    .background(.white, in: RoundedRectangle(cornerRadius: 16))
+                    .shadow(color: .black.opacity(0.2), radius: 6, y: 3)
                 }
 
-                Spacer()
-                Text(distanceLabel)
-                    .font(.system(.headline, design: .rounded).bold())
-                    .monospacedDigit()
-                    .foregroundStyle(Palette.accent)
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(distanceLabel)
+                        .font(.system(.title3, design: .rounded).weight(.heavy))
+                        .monospacedDigit()
+                    Text("TO PIN")
+                        .font(.system(.caption2, design: .rounded).weight(.bold))
+                        .opacity(0.75)
+                }
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
-        .padding(16)
-        .background(Palette.card.opacity(0.92), in: RoundedRectangle(cornerRadius: 22))
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(.black.opacity(0.32), in: RoundedRectangle(cornerRadius: 22))
+        .padding(.horizontal, 12)
         .padding(.bottom, 8)
     }
 
-    private var clubChipLabel: String {
-        let club = engine.currentClub
-        if club == .putter { return "PUTTER" }
-        return "\(club.shortLabel) · \(Int(club.maxYards)) YD"
+    private var shapeRow: some View {
+        HStack(spacing: 6) {
+            ForEach(ShotShape.allCases, id: \.self) { option in
+                Button {
+                    shape = option
+                    if case .meter(let club) = engine.currentKind {
+                        previewFull(club: club, carry: club.maxYards * engine.currentLie.distanceFactor)
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: option == .draw ? "arrow.turn.up.left"
+                              : option == .fade ? "arrow.turn.up.right" : "arrow.up")
+                            .font(.system(size: 11, weight: .heavy))
+                        Text(option.rawValue)
+                            .font(.system(.caption, design: .rounded).weight(.heavy))
+                    }
+                    .foregroundStyle(shape == option ? Palette.ink : .white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 7)
+                    .background(shape == option ? .white : .white.opacity(0.12),
+                                in: RoundedRectangle(cornerRadius: 10))
+                }
+            }
+        }
+    }
+
+    private var puttRow: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "eye.fill").font(.caption).foregroundStyle(.white.opacity(0.8))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(puttRead)
+                    .font(.system(.caption, design: .rounded).weight(.heavy))
+                    .foregroundStyle(.white)
+                if let read = partnerRead {
+                    Text("\(read.name)'s line is on the green")
+                        .font(.system(.caption2, design: .rounded).weight(.bold))
+                        .foregroundStyle(Color(hex: read.color))
+                }
+            }
+            Spacer()
+            Button {
+                readView.toggle()
+                scene?.setReadView(readView, spot: engine.currentSpot)
+            } label: {
+                Text(readView ? "BACK" : "READ")
+                    .font(.system(.caption, design: .rounded).weight(.black))
+                    .foregroundStyle(readView ? Palette.ink : .white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background(readView ? .white : .white.opacity(0.16), in: Capsule())
+            }
+        }
     }
 
     private var bagRow: some View {
@@ -305,23 +515,22 @@ struct GameView: View {
                     Button {
                         engine.clubOverride = club
                         withAnimation(.spring(duration: 0.25)) { showBag = false }
-                        scene.aim(spot: engine.currentSpot, aimDir: aimU,
+                        aimOffset = 0
+                        scene?.aim(spot: engine.currentSpot, aimDir: aimU,
                                   kind: engine.currentKind, animated: true)
+                        showDefaultAim()
                     } label: {
                         VStack(spacing: 1) {
                             Text(club.shortLabel)
                                 .font(.system(.callout, design: .rounded).weight(.heavy))
-                            Text(club == .putter ? "green" : "\(Int(club.maxYards)) yd")
+                            Text(club == .putter ? "putt" : "\(Int(club.maxYards))")
                                 .font(.system(.caption2, design: .rounded).bold())
                                 .opacity(0.75)
                         }
-                        .foregroundStyle(engine.currentClub == club
-                                         ? Palette.ink : Palette.cream)
-                        .frame(width: 62)
+                        .foregroundStyle(engine.currentClub == club ? Palette.ink : .white)
+                        .frame(width: 52)
                         .padding(.vertical, 7)
-                        .background(engine.currentClub == club
-                                    ? Palette.accent
-                                    : Palette.ink.opacity(0.55),
+                        .background(engine.currentClub == club ? .white : .white.opacity(0.14),
                                     in: RoundedRectangle(cornerRadius: 12))
                     }
                 }
@@ -330,210 +539,401 @@ struct GameView: View {
     }
 
     private var availableClubs: [Club] {
-        engine.putterAllowed && engine.currentLie != .green
-            ? Club.bag + [.putter]
-            : Club.bag
+        engine.putterAllowed && engine.currentLie != .green ? Club.bag + [.putter] : Club.bag
     }
 
     private var distanceLabel: String {
         engine.currentKind == .putt
-            ? "\(engine.distanceToPinFeet) FT"
-            : "\(Int(engine.distanceToPinYards)) YDS"
+            ? "\(engine.distanceToPinFeet) ft"
+            : "\(Int(engine.distanceToPinYards)) yd"
+    }
+
+    private var holeIntroCard: some View {
+        VStack {
+            Spacer()
+            VStack(spacing: 6) {
+                Text("HOLE \(engine.hole.number)")
+                    .font(.system(.caption, design: .rounded).weight(.heavy))
+                    .tracking(2)
+                    .opacity(0.8)
+                Text(engine.hole.name)
+                    .font(.system(size: 30, weight: .black, design: .rounded))
+                Text("PAR \(engine.hole.par) · \(engine.hole.yards) YARDS")
+                    .font(.system(.subheadline, design: .rounded).weight(.bold))
+                    .opacity(0.9)
+                Text("\(engine.currentTeam.name) tee off")
+                    .font(.system(.footnote, design: .rounded).weight(.semibold))
+                    .opacity(0.75)
+                    .padding(.top, 4)
+            }
+            .foregroundStyle(.white)
+            .padding(.vertical, 18)
+            .padding(.horizontal, 28)
+            .background(.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 24))
+            .padding(.bottom, 70)
+            Text("tap to skip")
+                .font(.system(.caption2, design: .rounded).weight(.semibold))
+                .foregroundStyle(.white.opacity(0.6))
+                .padding(.bottom, 24)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .onTapGesture { scene?.skipIntro() }
+    }
+
+    private var loadingCard: some View {
+        VStack(spacing: 10) {
+            ProgressView().tint(.white)
+            Text("Walking to hole \(engine.hole.number)…")
+                .font(.system(.subheadline, design: .rounded).weight(.bold))
+                .foregroundStyle(.white)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(LinearGradient(colors: [Color(hex: 0x1C5A3B), Palette.deep],
+                                   startPoint: .top, endPoint: .bottom).ignoresSafeArea())
+    }
+
+    /// Build the hole off the main thread, then hand it to SwiftUI.
+    private func buildScene(then ready: @escaping () -> Void) {
+        let hole = engine.hole
+        let character = engine.currentPlayer.character
+        DispatchQueue.global(qos: .userInitiated).async {
+            let built = Course3DScene(hole: hole, character: character)
+            DispatchQueue.main.async {
+                withAnimation(.easeOut(duration: 0.3)) { scene = built }
+                built.start()
+                ready()
+            }
+        }
     }
 
     // MARK: - Wiring
 
     private func wire() {
+        if CommandLine.arguments.contains("-fast") { Course3DScene.timeScale = 3 }
         SoundFX.prepare()
+        Haptics.prepare()
+        if !escrowed && !demoMode {
+            escrowed = true
+            app.coins = max(0, app.coins - engine.wager)
+        }
+        buildScene { afterLoad() }
+    }
 
-        // "-demoPutt" drops the ball on the green — simulator checks only.
-        // Also stages a mid-pull with the curved read line for screenshots.
-        if CommandLine.arguments.contains("-demoPutt") {
-            engine.teamSpot[0] = engine.hole.pin + CGVector(dx: -14, dy: -34)
+    private func afterLoad() {
+        let args = CommandLine.arguments
+        if args.contains("-demoPutt") {
+            engine.teamSpot[0] = engine.hole.pin + CGVector(dx: -10, dy: -30)
             engine.teamLie[0] = .green
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
-                scene.setPullback(0.55)
-                scene.showPuttPreview(from: engine.currentSpot,
-                                      direction: aimedDirection(drift: -0.25),
-                                      power: 0.17)
+        }
+        if args.contains("-autoplay") { autoplay(.holeIntro) }
+        if args.contains("-skipIntro") {
+            prepareTurn(animated: false)
+            engine.beginHole()
+        } else {
+            startHoleIntro()
+        }
+        if args.contains("-demoRead") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                readView = true
+                scene?.setReadView(true, spot: engine.currentSpot)
             }
         }
-        // "-demoSwing" auto-plays a full swing for simulator checks:
-        // staged pull-back, then a committed 88% swing, slight fade.
-        if CommandLine.arguments.contains("-demoSwing") {
-            for (t, b) in [(1.2, 0.3), (1.5, 0.6), (1.8, 0.9), (2.1, 1.0)] {
+        if args.contains("-demoSwing") {
+            let kind = engine.currentKind
+            for (t, b) in [(1.0, 0.3), (1.3, 0.6), (1.6, 0.85), (1.9, 0.95)] {
                 DispatchQueue.main.asyncAfter(deadline: .now() + t) {
-                    scene.setBackswing(CGFloat(b))
+                    scene?.setBackswing(CGFloat(b), kind: kind)
+                    if case .meter(let club) = kind {
+                        scene?.showAim(from: engine.currentSpot, direction: aimU,
+                                      carryYards: fullCarry(club: club, pull: b))
+                    }
                 }
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-                executeMeterShot(power: 0.88, earlyLate: 0.04)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.6) {
+                if case .meter(let club) = engine.currentKind {
+                    executeFullSwing(club: club, power: 0.9, earlyLate: 0.05)
+                } else if engine.currentKind == .putt {
+                    executePutt(dir: aimU, distance: puttDistance(0.5), pull: 0.5)
+                }
             }
         }
-        scene.placeBall(at: engine.currentSpot, onTee: engine.currentLie == .tee)
-        scene.aim(spot: engine.currentSpot, aimDir: aimU,
-                  kind: engine.currentKind, animated: false)
+    }
 
-        scene.onPuttEnded = { holed, end in
-            engine.resolvePutt(holed: holed, end: end)
-            if holed {
-                scene.celebrate(at: engine.hole.pin)
-                SoundFX.play("pure_chime", volume: 0.5, after: 0.25)
-            } else if pendingPuttStartFt <= 5 {
-                Haptics.rumble()   // missing a gimme hurts in your hand, not on screen
-            }
+    private func loadHoleScene() {
+        scene?.tearDown()
+        scene = nil
+        aimOffset = 0
+        buildScene { startHoleIntro() }
+    }
+
+    private func startHoleIntro() {
+        prepareTurn(animated: false)
+        scene?.playIntro {
+            if engine.phase == .holeIntro { engine.beginHole() }
         }
     }
 
     private func handlePhaseChange(_ phase: GamePhase) {
-        if phase == .holeComplete, let summary = engine.summary, !coinsApplied {
-            coinsApplied = true
-            app.apply(summary)
-            return
-        }
-        guard phase == .aiming else { return }
-        aimOffset = 0
-        showBag = false
-        scene.removePreview()
-        if engine.roundShots.isEmpty {
-            scene.clearMarkers()
-        } else if let first = engine.roundShots.last, !first.holed {
-            // Teammate's ball stays visible while the second player hits.
-            scene.addMarker(at: first.endPoint,
-                            teamColorHex: engine.teams[first.teamIndex].colorHex)
-        }
-        scene.placeBall(at: engine.currentSpot, onTee: engine.currentLie == .tee)
-        scene.aim(spot: engine.currentSpot, aimDir: aimU,
-                  kind: engine.currentKind, animated: true)
-    }
-
-    // MARK: - Gesture → world mapping
-
-    /// Chip/putt aim: lateral drift steers the launch line left/right of
-    /// the current aim line (up to ~31° at full drift) to play the break.
-    private func aimedDirection(drift: Double) -> CGVector {
-        (aimU + aimU.perpendicularRight * CGFloat(drift * 0.6)).normalized
-    }
-
-    /// Pendulum putt pace: gentle curve for feel at short range, full
-    /// pull rolls out the putter's 40-yd max. The same number drives the
-    /// stroke, the read line, and the pill — they can never disagree.
-    private func puttPower(_ b: Double) -> Double {
-        pow(b, 1.6) * 0.317
-    }
-
-    /// Chips are little swings: same exponential backswing model as full
-    /// shots, with the same tiny tempo nudge when there's a real rip.
-    private func chipPower(_ b: Double, upSpeed: Double?) -> Double {
-        let tempo = upSpeed.map { 0.96 + 0.08 * min($0 / 2600, 1) } ?? 1.0
-        return min(exp(2.0 * (b - 1)) * tempo, 1.0)
-    }
-
-    private func flickLabel(power: Double) -> String {
-        if engine.currentKind == .putt {
-            // Projected roll: v0/k in points, 2 pts = 1 yd, 3 ft = 1 yd.
-            let feet = Int(power * 480 / 1.9 / 2 * 3)
-            return "\(feet) ft"
-        }
-        return "\(Int(power * Club.sandWedge.maxYards)) yds"
-    }
-
-    // MARK: - Shot execution
-
-    private func executeMeterShot(power: Double, earlyLate: Double) {
-        guard case .meter(let club) = engine.currentKind else { return }
-        let raw = ShotEngine.meterShot(club: club, power: power,
-                                       earlyLate: earlyLate,
-                                       wind: engine.wind,
-                                       aim: aimU)
-        let result = applyLie(raw)
-        let spot = engine.currentSpot
-        let aim = aimU
-        engine.beginShot()
-
-        // The swing quality drives the animation: pure = tall balanced
-        // finish, mishit = truncated finish + a lurch toward the miss.
-        // You should read the strike from the body before the ball lands.
-        let quality: Course3DScene.SwingQuality
-        switch result.flavor {
-        case .pure:
-            quality = .pure
-        case .topped, .fat, .chunk, .bigHook, .bigSlice:
-            quality = .mishit(lateral: earlyLate >= 0 ? 1 : -1)
+        if CommandLine.arguments.contains("-autoplay") { autoplay(phase) }
+        switch phase {
+        case .matchComplete:
+            if let summary = engine.summary, !settled {
+                settled = true
+                if !demoMode { app.settle(summary) }
+            }
+        case .aiming:
+            prepareTurn(animated: true)
+            showTurnBanner()
         default:
-            quality = abs(earlyLate) > 0.33
-                ? .mishit(lateral: earlyLate > 0 ? 1 : -1)
-                : .clean
-        }
-
-        SoundFX.play("whoosh", volume: 0.5 + Float(power) * 0.3)
-        scene.swingRelease(power: power, quality: quality) {
-            if case .mishit = quality {
-                Haptics.rumble()
-            } else {
-                Haptics.accuracyLock()
-            }
-            playHitSound(result: result, club: club)
-            scene.animateShot(from: spot, aim: aim,
-                              carryYards: result.carryYards,
-                              lateralYards: result.lateralYards,
-                              flavor: result.flavor,
-                              apexScale: club.apexScale,
-                              rollFactor: CGFloat(club.rollFactor),
-                              tracerHex: result.rating == .perfect
-                                  ? 0xFFD98A : 0xF5EFDA) { end, samples in
-                engine.resolveLanding(kind: .meter(club), result: result,
-                                      end: end, samples: samples)
-            }
-        }
-    }
-
-    private func executeFlick(dir: CGVector, power: Double) {
-        scene.removePreview()
-        switch engine.currentKind {
-        case .chip:
-            let (raw, angleError) = ShotEngine.chip(power: power)
-            let result = applyLie(raw)
-            let spot = engine.currentSpot
-            engine.beginShot()
-            scene.strokeRelease(power: power) {
-                SoundFX.play(result.flavor == .chunk ? "mishit" : "hit_chip",
-                             volume: 0.75)
-                // Chips release and run out — a bump-and-run rolls a
-                // healthy fraction of its carry on the green.
-                scene.animateShot(from: spot,
-                                  aim: dir.rotated(by: angleError),
-                                  carryYards: result.carryYards,
-                                  lateralYards: 0,
-                                  flavor: result.flavor,
-                                  apexScale: Club.sandWedge.apexScale,
-                                  rollFactor: 0.22) { end, samples in
-                    engine.resolveLanding(kind: .chip, result: result,
-                                          end: end, samples: samples)
-                }
-            }
-        case .putt:
-            pendingPuttStartFt = engine.distanceToPinFeet
-            engine.beginShot()
-            Haptics.powerLock()
-            scene.strokeRelease(power: power) {
-                SoundFX.play("hit_putt", volume: 0.7)
-                scene.startPutt(velocity: dir.normalized * CGFloat(power * 480))
-            }
-        case .meter:
             break
         }
     }
 
-    private func playHitSound(result: ShotResult, club: Club) {
-        switch result.flavor {
-        case .topped, .fat, .chunk:
-            SoundFX.play("mishit", volume: 0.85)
-        default:
-            SoundFX.play(club == .driver ? "hit_driver" : "hit_iron", volume: 0.9)
-            if result.rating == .perfect {
-                SoundFX.play("pure_chime", volume: 0.4, after: 0.12)
+    /// Set up the scene for whoever is up: their golfer, their ball, the
+    /// other balls on the course as markers, and the caddie's aim.
+    private func prepareTurn(animated: Bool) {
+        aimOffset = 0
+        showBag = false
+        shape = .straight
+        if readView { readView = false; scene?.setReadView(false, spot: engine.currentSpot) }
+        let puttPts = CGFloat(engine.distanceToPinYards) * Hole.pointsPerYard
+        puttRange = min(max(puttPts * 1.8 + 8, 18), 140)
+        if engine.shooter == 0 { partnerRead = nil }
+        if let read = partnerRead, engine.currentKind == .putt {
+            scene?.showPartnerRead(read.path, colorHex: read.color)
+        } else {
+            scene?.clearPartnerRead()
+        }
+        scene?.clearPreview()
+        scene?.clearMarkers()
+        scene?.setCharacter(engine.currentPlayer.character)
+        // Teammate's ball from this round.
+        for shot in engine.roundShots where !shot.holed {
+            scene?.addMarker(at: shot.penalty ? (shot.dropPoint ?? shot.endPoint) : shot.endPoint,
+                            teamColorHex: engine.teams[shot.teamIndex].colorHex)
+        }
+        // The other team's ball.
+        let other = 1 - engine.activeTeam
+        if !engine.holedOut[other] && engine.teamLie[other] != .tee {
+            scene?.addMarker(at: engine.teamSpot[other], teamColorHex: engine.teams[other].colorHex)
+        }
+        scene?.placeBall(at: engine.currentSpot, onTee: engine.currentLie == .tee)
+        scene?.aim(spot: engine.currentSpot, aimDir: aimU, kind: engine.currentKind, animated: animated)
+        showDefaultAim()
+    }
+
+    private func showDefaultAim() {
+        switch engine.currentKind {
+        case .meter(let club):
+            previewFull(club: club, carry: club.maxYards * engine.currentLie.distanceFactor)
+        case .chip:
+            scene?.showAim(from: engine.currentSpot, direction: aimU,
+                          carryYards: min(engine.distanceToPinYards * 0.7, 60))
+        case .putt:
+            let d = CGFloat(engine.distanceToPinYards) * Hole.pointsPerYard
+            let tr = BallPhysics.putt(from: engine.currentSpot, direction: aimU,
+                                      speed: BallPhysics.puttSpeed(forDistance: d + 1),
+                                      course: engine.hole.course)
+            scene?.showPuttRead(tr, fraction: 0.8)
+        }
+    }
+
+    private func showTurnBanner() {
+        let text = "\(engine.currentPlayer.name.uppercased())'S SHOT"
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { turnBanner = text }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) {
+            if turnBanner == text { withAnimation(.easeOut(duration: 0.3)) { turnBanner = nil } }
+        }
+    }
+
+    // MARK: - Autoplay (playtest bot)
+
+    /// Plays the whole match through the real UI flow with a reasonable
+    /// bot golfer: right club, sensible distances, human-sized errors.
+    private func autoplay(_ phase: GamePhase) {
+        let pace = 1 / Course3DScene.timeScale
+        func later(_ t: Double, _ run: @escaping () -> Void) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + t * pace, execute: run)
+        }
+        switch phase {
+        case .holeIntro:
+            later(0.6) { scene?.skipIntro() }
+        case .aiming:
+            let hole = engine.holeIndex, team = engine.activeTeam, shooter = engine.shooter
+            let strokes = engine.strokes
+            later(1.4) {
+                guard engine.phase == .aiming, engine.holeIndex == hole, engine.activeTeam == team,
+                      engine.shooter == shooter, engine.strokes == strokes else { return }
+                botShot()
             }
+        case .shotResult:
+            if let o = engine.lastOutcome {
+                NSLog("SCRAMBLE shot h%d %@ %@ lie=%@ %.0fyd holed=%d pen=%d", engine.hole.number,
+                      o.playerName, o.ratingLine, o.lie.label, o.distanceToPinYards,
+                      o.holed ? 1 : 0, o.penalty ? 1 : 0)
+            }
+            later(1.6) { if engine.phase == .shotResult { engine.advanceAfterResult() } }
+        case .pickBall:
+            later(1.0) {
+                if engine.phase == .pickBall, let best = engine.recommendedBall() { engine.pick(best) }
+            }
+        case .holeComplete:
+            NSLog("SCRAMBLE hole %d done: %@", engine.hole.number, "\(engine.strokes)")
+            later(1.8) { if engine.phase == .holeComplete { engine.startNextHole() } }
+        case .matchComplete:
+            NSLog("SCRAMBLE match done: card=%@ totals=%@", "\(engine.scorecard)",
+                  "\(engine.summary?.totals ?? [])")
+        case .ballInMotion:
+            break
+        }
+    }
+
+    private func botShot() {
+        let noise = { (s: Double) in (Double.random(in: -1...1) + Double.random(in: -1...1)) / 2 * s }
+        switch engine.currentKind {
+        case .meter(let club):
+            let lf = engine.currentLie.distanceFactor
+            let want = min(engine.distanceToPinYards, club.maxYards * lf)
+            let b = min(max(1 + log(want / (club.maxYards * lf)) / 2.3 + noise(0.04), 0.3), 1)
+            executeFullSwing(club: club, power: min(exp(2.3 * (b - 1)), 1.04),
+                             earlyLate: noise(0.35))
+        case .chip:
+            let lf = engine.currentLie.distanceFactor
+            let want = engine.distanceToPinYards * 0.72
+            let b = min(max(pow(want / 62 / lf, 1 / 1.5) + noise(0.05), 0.05), 1)
+            executeChip(dir: aimedDirection(drift: noise(0.05)), carry: chipCarry(b), pull: b)
+        case .putt:
+            let d = CGFloat(engine.distanceToPinYards) * Hole.pointsPerYard + 1.2
+            let b = min(max(puttPull(forDistance: d) + noise(0.04), 0.02), 1)
+            executePutt(dir: aimU.rotated(by: CGFloat(noise(0.05))), distance: puttDistance(b), pull: b)
+        }
+    }
+
+    // MARK: - Shot execution
+
+    private func executeFullSwing(club: Club, power: Double, earlyLate: Double) {
+        guard engine.phase == .aiming else { return }
+        let raw = ShotEngine.meterShot(club: club, power: power, earlyLate: earlyLate)
+        let result = applyLie(raw)
+        let spot = engine.currentSpot
+        let grounded = result.flavor == .topped || result.flavor == .fat
+        // Draw/fade: start away from the curve, bend back to the line.
+        let curve = grounded ? 0 : shapeCurve(club)
+        let aim = grounded ? aimU : startLine(club: club, carry: result.carryYards)
+        let tr = BallPhysics.strike(from: spot, aim: aim, club: club,
+                                    carryYards: result.carryYards,
+                                    lateralYards: result.lateralYards + curve,
+                                    grounded: grounded, wind: engine.wind,
+                                    course: engine.hole.course)
+        engine.beginShot()
+
+        let quality: Course3DScene.SwingQuality
+        switch result.rating {
+        case .perfect: quality = .pure
+        case .good: quality = .clean
+        default: quality = .mishit
+        }
+        SoundFX.play("whoosh", volume: 0.45 + Float(power) * 0.3)
+        scene?.swingRelease(power: power, kind: .meter(club), quality: quality) {
+            Haptics.accuracyLock()
+            playHitSound(result: result, club: club)
+            scene?.playImpactEffect(perfect: result.rating == .perfect)
+            scene?.play(tr, aim: aim, speed: 1.3,
+                       tracerHex: result.rating == .perfect ? 0xFFD98A : 0xFFFFFF) { tr in
+                engine.resolve(kind: .meter(club), result: result, trajectory: tr, from: spot)
+                react(to: tr, rating: result.rating)
+                gallery(tr, from: spot)
+            }
+        }
+    }
+
+    private func executeChip(dir: CGVector, carry: Double, pull: Double) {
+        guard engine.phase == .aiming else { return }
+        let result = ShotEngine.chip(carryYards: carry, power: pull)
+        let spot = engine.currentSpot
+        let tr = BallPhysics.strike(from: spot, aim: dir, club: .sandWedge,
+                                    carryYards: result.carryYards, lateralYards: 0,
+                                    grounded: false, wind: engine.wind,
+                                    course: engine.hole.course)
+        engine.beginShot()
+        scene?.swingRelease(power: pull, kind: .chip, quality: .clean) {
+            SoundFX.play(result.flavor == .chunk ? "mishit" : "hit_chip", volume: 0.75)
+            scene?.playImpactEffect(perfect: false)
+            scene?.play(tr, aim: dir, speed: 1.15, tracerHex: nil) { tr in
+                engine.resolve(kind: .chip, result: result, trajectory: tr, from: spot)
+                react(to: tr, rating: result.rating)
+                gallery(tr, from: spot)
+            }
+        }
+    }
+
+    private func executePutt(dir: CGVector, distance: CGFloat, pull: Double) {
+        guard engine.phase == .aiming else { return }
+        let spot = engine.currentSpot
+        let tr = BallPhysics.putt(from: spot, direction: dir,
+                                  speed: BallPhysics.puttSpeed(forDistance: distance),
+                                  course: engine.hole.course)
+        engine.beginShot()
+        scene?.clearPreview()
+        scene?.swingRelease(power: pull, kind: .putt, quality: .clean) {
+            SoundFX.play("hit_putt", volume: 0.8)
+            Haptics.tick()
+            let firstOfTeam = engine.shooter == 0
+            let team = engine.activeTeam
+            let name = engine.currentPlayer.name
+            scene?.play(tr, aim: dir, speed: 1.0, tracerHex: nil) { tr in
+                if firstOfTeam && tr.finish != .holed {
+                    partnerRead = (tr.path, engine.teams[team].colorHex, name)
+                }
+                engine.resolve(kind: .putt, result: nil, trajectory: tr, from: spot)
+                react(to: tr, rating: tr.finish == .holed ? .perfect : .miss)
+                gallery(tr, from: spot)
+            }
+        }
+    }
+
+    private func react(to tr: BallPhysics.Trajectory, rating: ShotRating) {
+        let good = tr.finish == .holed || (rating == .perfect && tr.finish == .rest)
+        let bad = tr.finish == .water || rating == .bad || rating == .terrible
+        scene?.react(celebrate: good, dejected: bad)
+    }
+
+    /// Strike sound by contact: the titanium crack / crisp click when
+    /// it's pure, duller when it's not, a clank or a thud when it's ugly.
+    private func playHitSound(result: ShotResult, club: Club) {
+        let wood = club == .driver || club == .wood3
+        switch result.flavor {
+        case .topped:
+            SoundFX.play("mishit_thin", volume: 0.85)
+        case .fat, .chunk:
+            SoundFX.play("mishit", volume: 0.9)
+        default:
+            switch result.rating {
+            case .perfect:
+                SoundFX.play(wood ? "hit_driver_pure" : "hit_iron_pure", volume: 1.0)
+            case .good:
+                SoundFX.play(wood ? "hit_driver" : "hit_iron", volume: 0.85)
+            case .miss:
+                SoundFX.play(wood ? "hit_driver" : "hit_iron", volume: 0.65)
+            case .bad, .terrible:
+                SoundFX.play("mishit_thin", volume: 0.75)
+            }
+        }
+    }
+
+    /// The gallery: applause for holed shots (big for long ones), a groan
+    /// for the water.
+    private func gallery(_ tr: BallPhysics.Trajectory, from spot: CGPoint) {
+        switch tr.finish {
+        case .holed:
+            let long = spot.distance(to: engine.hole.pin) / Hole.pointsPerYard * 3 >= 15
+                || tr.landing != nil
+            SoundFX.play(long ? "applause_big" : "applause", volume: 0.8, after: 0.35)
+        case .water:
+            SoundFX.play("crowd_ohh", volume: 0.6, after: 0.3)
+        case .rest:
+            break
         }
     }
 

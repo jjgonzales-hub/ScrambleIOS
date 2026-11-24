@@ -8,9 +8,11 @@ enum SoundFX {
     private static var players: [String: AVAudioPlayer] = [:]
     private static var configured = false
 
-    static let allSounds = ["hit_driver", "hit_iron", "hit_chip", "hit_putt",
-                            "mishit", "whoosh", "cup_drop", "splash",
-                            "ui_lock", "pure_chime"]
+    static let allSounds = ["hit_driver", "hit_driver_pure", "hit_iron", "hit_iron_pure",
+                            "hit_chip", "hit_putt", "mishit", "mishit_thin", "whoosh",
+                            "land_turf", "land_green", "land_sand", "tree_hit",
+                            "cup_drop", "lip_out", "applause", "applause_big", "crowd_ohh",
+                            "splash", "ui_lock", "pure_chime"]
 
     static func prepare() {
         guard !configured else { return }

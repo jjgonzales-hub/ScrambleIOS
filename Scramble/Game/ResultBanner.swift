@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Post-shot overlay: big exaggerated rating, the auto-generated group chat
-/// message, and Share / Continue actions.
+/// Post-shot card: big rating, the shot stats, where it finished, and the
+/// auto-generated chat line. Sits low so the ball stays visible.
 struct ResultBanner: View {
     let outcome: ShotOutcome
     let onShare: () -> Void
@@ -12,90 +12,78 @@ struct ResultBanner: View {
     var body: some View {
         VStack {
             Spacer()
-            VStack(spacing: 14) {
+            VStack(spacing: 10) {
                 Text(headline)
-                    .font(.system(size: 28, weight: .black, design: .rounded))
+                    .font(.system(size: 30, weight: .black, design: .rounded))
                     .foregroundStyle(headlineColor)
-                    .scaleEffect(appeared ? 1 : 0.94)
+                    .scaleEffect(appeared ? 1 : 0.9)
                     .opacity(appeared ? 1 : 0)
-                    .animation(.spring(response: 0.3, dampingFraction: 0.8),
-                               value: appeared)
 
                 if !outcome.ratingLine.isEmpty {
                     Text(outcome.ratingLine)
-                        .font(.system(.headline, design: .rounded).bold())
-                        .foregroundStyle(Palette.cream)
+                        .font(.system(.subheadline, design: .rounded).weight(.heavy))
+                        .foregroundStyle(.white.opacity(0.9))
+                        .monospacedDigit()
                 }
 
-                HStack(spacing: 8) {
-                    Text(outcome.lie.emoji)
-                    Text(lieLine)
-                        .font(.system(.subheadline, design: .rounded))
-                        .foregroundStyle(Palette.cream.opacity(0.85))
-                }
+                Text(lieLine)
+                    .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.75))
 
                 if !outcome.message.isEmpty {
                     Text("“\(outcome.message)”")
-                        .font(.system(.subheadline, design: .rounded).italic())
-                        .foregroundStyle(Palette.accent)
+                        .font(.system(.footnote, design: .rounded).italic())
+                        .foregroundStyle(.white.opacity(0.7))
                         .multilineTextAlignment(.center)
-                        .padding(.horizontal, 8)
+                        .padding(.horizontal, 6)
                 }
 
-                HStack(spacing: 12) {
+                HStack(spacing: 10) {
                     Button(action: onShare) {
-                        Label("Share to Chat", systemImage: "bubble.left.and.bubble.right.fill")
-                            .font(.system(.callout, design: .rounded).bold())
-                            .foregroundStyle(Palette.cream)
-                            .padding(.vertical, 12)
-                            .frame(maxWidth: .infinity)
-                            .background(Palette.ink, in: RoundedRectangle(cornerRadius: 14))
+                        Image(systemName: "bubble.left.and.bubble.right.fill")
                     }
-                    Button(action: onContinue) {
-                        Text("Continue")
-                            .font(.system(.callout, design: .rounded).bold())
-                            .foregroundStyle(Palette.ink)
-                            .padding(.vertical, 12)
-                            .frame(maxWidth: .infinity)
-                            .background(Palette.accent, in: RoundedRectangle(cornerRadius: 14))
-                    }
+                    .buttonStyle(SecondaryButtonStyle())
+                    .frame(width: 70)
+                    Button("Continue", action: onContinue)
+                        .buttonStyle(PrimaryButtonStyle())
                 }
+                .padding(.top, 4)
             }
-            .padding(20)
-            .background(Palette.card, in: RoundedRectangle(cornerRadius: 24))
-            .overlay(
-                RoundedRectangle(cornerRadius: 24)
-                    .stroke(Palette.accent.opacity(0.5), lineWidth: 2)
-            )
-            .padding(.horizontal, 18)
-            .padding(.bottom, 24)
+            .padding(18)
+            .overlayCard()
+            .padding(.horizontal, 14)
+            .padding(.bottom, 18)
         }
-        .onAppear { appeared = true }
+        .onAppear {
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) { appeared = true }
+        }
     }
 
     private var headline: String {
-        if outcome.holed {
-            return outcome.kind == .putt ? "SUNK IT" : "HOLED OUT"
-        }
-        if outcome.penalty { return "IN THE WATER" }
+        if outcome.holed { return outcome.kind == .putt ? "SUNK IT!" : "IN THE HOLE!" }
+        if outcome.penalty { return "SPLASH" }
         switch outcome.kind {
-        case .putt: return "MISSED"
-        default: return outcome.ratingLine.components(separatedBy: " •").first ?? "SHOT"
+        case .putt: return outcome.ratingLine.hasPrefix("LIPPED") ? "LIPPED OUT" : "MISSED"
+        case .chip: return outcome.distanceToPinYards * 3 < 4 ? "TAP-IN RANGE" : "CHIPPED"
+        case .meter:
+            return outcome.ratingLine.components(separatedBy: " ·").first ?? "SHOT"
         }
     }
 
     private var headlineColor: Color {
-        if outcome.holed { return Palette.fairway }
-        if outcome.penalty { return Palette.water }
-        return Palette.cream
+        if outcome.holed { return Palette.gold }
+        if outcome.penalty { return Palette.danger }
+        if headline == "PURE" { return Palette.gold }
+        if headline == "UGLY" || headline == "DISASTER" { return Palette.danger }
+        return .white
     }
 
     private var lieLine: String {
-        if outcome.holed { return "In the cup!" }
-        if outcome.penalty { return "Penalty — drop coming" }
-        let dist = outcome.lie == .green
+        if outcome.holed { return "In the cup" }
+        if outcome.penalty { return "One-stroke penalty · drop near where it crossed" }
+        let dist = outcome.lie == .green || outcome.distanceToPinYards < 10
             ? "\(Int(outcome.distanceToPinYards * 3)) ft to the pin"
-            : "\(Int(outcome.distanceToPinYards)) yds to the pin"
-        return "\(outcome.lie.label) • \(dist)"
+            : "\(Int(outcome.distanceToPinYards)) yd to the pin"
+        return "\(outcome.lie.label) · \(dist)"
     }
 }

@@ -5,6 +5,8 @@ struct Player: Identifiable, Equatable {
     let id = UUID()
     var name: String
     var emoji: String
+    /// Kenney Mini Character used for this golfer (see GolferRig.characters).
+    var character: String = "male_a"
 }
 
 struct Team: Identifiable, Equatable {
@@ -18,7 +20,7 @@ struct MatchConfig: Identifiable {
     let id = UUID()
     let teams: [Team]
     let wager: Int
-    let hole: Hole
+    let holes: [Hole]
 }
 
 /// The bag — Golf Dreams style: you pick the club, each shows its carry,
@@ -204,12 +206,14 @@ struct Bonus: Identifiable {
     let amount: Int
 }
 
-struct HoleSummary {
-    let par: Int
+struct MatchSummary {
+    let pars: [Int]
     let teamNames: [String]
-    let strokes: [Int]
+    let scorecard: [[Int]]    // [team][hole]
+    let totals: [Int]
     let winner: Int?          // nil = push
     let pot: Int
+    let wager: Int
     let userDelta: Int        // wager result for the local player
     let bonuses: [Bonus]
     let chatLine: String
