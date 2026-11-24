@@ -16,8 +16,9 @@ struct SwingGestureOverlay: View {
     enum Mode { case full, chip, putt }
 
     let mode: Mode
-    /// Pill text for the current pull 0…1.
-    let label: (Double) -> String
+    /// Optional pill text for the current pull 0…1 (nil = just the power
+    /// strip, Golf Dreams-style: you learn the feel).
+    var label: ((Double) -> String)? = nil
     /// Live during the pull: (pull 0…1, aim drift -1…1).
     var onPull: (Double, Double) -> Void
     /// Committed: (pull 0…1, aim drift -1…1, shape drift -1…1, up-swipe pts/s).
@@ -96,7 +97,7 @@ struct SwingGestureOverlay: View {
                     .position(c)
                 Circle().fill(.white).frame(width: 10, height: 10).position(c)
 
-                Text(label(pull))
+                if let label { Text(label(pull))
                     .font(.system(.callout, design: .rounded).weight(.heavy))
                     .monospacedDigit()
                     .foregroundStyle(Palette.ink)
@@ -104,7 +105,7 @@ struct SwingGestureOverlay: View {
                     .padding(.vertical, 6)
                     .background(pull >= 1 ? Palette.accent : .white, in: Capsule())
                     .shadow(color: .black.opacity(0.18), radius: 4, y: 2)
-                    .position(x: min(c.x + 62, 330), y: c.y - 30)
+                    .position(x: min(c.x + 62, 330), y: c.y - 30) }
             } else {
                 Text(hint)
                     .font(.system(.footnote, design: .rounded).weight(.semibold))

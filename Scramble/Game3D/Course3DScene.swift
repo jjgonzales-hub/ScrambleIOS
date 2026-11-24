@@ -833,7 +833,9 @@ final class Course3DScene: NSObject {
 
     /// Stand the golfer at `spot`, facing along `aimDir`, and frame the
     /// shot from behind like Golf Dreams.
-    func aim(spot: CGPoint, aimDir: CGVector, kind: ShotKind, animated: Bool) {
+    /// `pitch` 0…1 lifts the camera from the address view up into a
+    /// look-down-range view (free look).
+    func aim(spot: CGPoint, aimDir: CGVector, kind: ShotKind, animated: Bool, pitch: CGFloat = 0) {
         let aimU = aimDir.normalized
         let putting = kind == .putt
         greenGridNode.isHidden = !putting
@@ -856,8 +858,16 @@ final class Course3DScene: NSObject {
         // Camera behind the ball, nudged right so the golfer sits left of
         // centre and the target line runs up the middle.
         let side: CGFloat = putting ? 1.8 : 3.5
-        camGoal = world(spot + aimU * -back + aimU.perpendicularRight * side, h: height)
-        lookGoal = world(spot + aimU * ahead, h: lookH)
+        let lift: CGFloat, reach: CGFloat
+        switch kind {
+        case .putt: (lift, reach) = (26, 14)
+        case .chip: (lift, reach) = (55, 50)
+        case .meter: (lift, reach) = (130, 230)
+        }
+        let p = min(max(pitch, 0), 1)
+        camGoal = world(spot + aimU * (-back * (1 - 0.45 * p)) + aimU.perpendicularRight * side * (1 - p),
+                        h: height + lift * p)
+        lookGoal = world(spot + aimU * (ahead + reach * p), h: lookH * (1 - p))
         if !animated || cameraMode == .intro {
             if cameraMode != .intro {
                 cameraNode.position = camGoal
@@ -947,10 +957,10 @@ final class Course3DScene: NSObject {
 
     /// Dashed aim line from the ball with a landing ring at `carryYards`
     /// (still-air) — the ring is how you judge partial swings.
-    func showAim(from spot: CGPoint, direction: CGVector, carryYards: Double?) {
+    func showAim(from spot: CGPoint, direction: CGVector, carryYards: Double?, lineYards: Double = 30) {
         clearPreview()
         let dir = direction.normalized
-        let carry = CGFloat(carryYards ?? 30) * Hole.pointsPerYard
+        let carry = CGFloat(carryYards ?? lineYards) * Hole.pointsPerYard
         var t: CGFloat = 6
         while t < carry - 4 {
             // Dots grow with distance so they read at the far end too.
@@ -1021,7 +1031,7 @@ final class Course3DScene: NSObject {
 
     /// Curved preview of a shaped shot: the still-air flight's ground
     /// track up to the landing, with the landing ring.
-    func showFlightPreview(_ tr: BallPhysics.Trajectory, from spot: CGPoint) {
+    func showFlightPreview(_ tr: BallPhysics.Trajectory, from spot: CGPoint, ring: Bool = true) {
         clearPreview()
         guard let landing = tr.landing else { return }
         let total = spot.distance(to: landing)
@@ -1037,7 +1047,7 @@ final class Course3DScene: NSObject {
             dot.position = world(f.p, h: 0.35)
             previewRoot.addChildNode(dot)
         }
-        addLandingRing(at: landing, carry: total)
+        if ring { addLandingRing(at: landing, carry: total) }
     }
 
     private func addLandingRing(at target: CGPoint, carry: CGFloat) {

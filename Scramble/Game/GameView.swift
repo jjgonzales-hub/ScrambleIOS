@@ -21,7 +21,8 @@ struct GameView: View {
     @State private var partnerRead: (path: [CGPoint], color: UInt32, name: String)?
     /// Full-stroke distance for this putt (pts) — scales with the putt so
     /// short ones get fine control.
-    @State private var puttRange: CGFloat = 60
+    @State private var viewPitch: CGFloat = 0
+    @State private var pitchDragStart: CGFloat?
 
     enum ShotShape: String, CaseIterable { case draw = "Draw", straight = "Straight", fade = "Fade" }
 
@@ -122,10 +123,9 @@ struct GameView: View {
         case .meter(let club):
             SwingGestureOverlay(
                 mode: .full,
-                label: { b in "\(Int(fullCarry(club: club, pull: b))) yd" },
                 onPull: { b, _ in
+                    resetLook()
                     scene?.setBackswing(CGFloat(b), kind: kind)
-                    previewFull(club: club, carry: fullCarry(club: club, pull: b))
                 },
                 onSwing: { b, aimDrift, shapeDrift, upSpeed in
                     // Golf Dreams model: backswing length is the power and
@@ -147,21 +147,9 @@ struct GameView: View {
             let isPutt = kind == .putt
             SwingGestureOverlay(
                 mode: isPutt ? .putt : .chip,
-                label: { b in
-                    isPutt ? "\(Int((puttDistance(b) / 2 * 3).rounded())) ft" : "\(Int(chipCarry(b))) yd"
-                },
-                onPull: { b, aimDrift in
+                onPull: { b, _ in
+                    resetLook()
                     scene?.setBackswing(CGFloat(b), kind: kind)
-                    let dir = aimedDirection(drift: aimDrift)
-                    if isPutt {
-                        let tr = BallPhysics.putt(from: engine.currentSpot, direction: dir,
-                                                  speed: BallPhysics.puttSpeed(forDistance: puttDistance(b)),
-                                                  course: engine.hole.course)
-                        scene?.showPuttRead(tr, fraction: 0.8)
-                    } else {
-                        scene?.showAim(from: engine.currentSpot, direction: dir,
-                                      carryYards: chipCarry(b))
-                    }
                 },
                 onSwing: { b, aimDrift, _, _ in
                     let dir = aimedDirection(drift: aimDrift)
@@ -179,33 +167,50 @@ struct GameView: View {
         }
     }
 
-    /// Drag across the top of the screen to rotate the aim line.
+    /// Free look: drag across the top half of the screen to swing the
+    /// camera (and your aim) all the way around the ball; drag down to lift
+    /// the camera and look down range, up to come back to the ball.
     private var aimStrip: some View {
-        VStack(spacing: 0) {
-            Color.clear
-                .frame(height: 230)
+        GeometryReader { geo in
+            VStack(spacing: 0) {
+                ZStack(alignment: .bottom) {
+                    Color.clear
+                    Text("drag to look & aim")
+                        .font(.system(.caption2, design: .rounded).weight(.bold))
+                        .foregroundStyle(.white.opacity(0.55))
+                        .padding(.bottom, 6)
+                }
+                .frame(height: geo.size.height * 0.46)
                 .contentShape(Rectangle())
                 .gesture(
                     DragGesture(minimumDistance: 3)
                         .onChanged { g in
-                            if aimDragStart == nil { aimDragStart = aimOffset }
+                            if aimDragStart == nil { aimDragStart = aimOffset; pitchDragStart = viewPitch }
                             let sens: Double
                             switch engine.currentKind {
-                            case .putt: sens = 0.0006
-                            case .chip: sens = 0.001
-                            case .meter: sens = 0.0016
+                            case .putt: sens = 0.0016
+                            case .chip: sens = 0.0026
+                            case .meter: sens = 0.0038
                             }
-                            aimOffset = min(max((aimDragStart ?? 0)
-                                                - Double(g.translation.width) * sens, -0.7), 0.7)
+                            aimOffset = (aimDragStart ?? 0) - Double(g.translation.width) * sens
+                            viewPitch = min(max((pitchDragStart ?? 0) + g.translation.height / 260, 0), 1)
                             scene?.aim(spot: engine.currentSpot, aimDir: aimU,
-                                      kind: engine.currentKind, animated: true)
+                                       kind: engine.currentKind, animated: true, pitch: viewPitch)
                             showDefaultAim()
                         }
-                        .onEnded { _ in aimDragStart = nil }
+                        .onEnded { _ in aimDragStart = nil; pitchDragStart = nil }
                 )
-            Spacer()
+                Spacer()
+            }
         }
         .ignoresSafeArea()
+    }
+
+    /// Starting a swing brings the camera back down behind the ball.
+    private func resetLook() {
+        guard viewPitch > 0 else { return }
+        viewPitch = 0
+        scene?.aim(spot: engine.currentSpot, aimDir: aimU, kind: engine.currentKind, animated: true)
     }
 
     // MARK: - Power models
@@ -221,15 +226,17 @@ struct GameView: View {
         return max(carry, 1)
     }
 
-    /// Flat-green roll distance (pts) for a putting stroke. The full
-    /// stroke covers `puttRange`, which scales with the putt's length, so a
-    /// 4-footer and a 40-footer both use a comfortable amount of thumb.
+    /// Flat-green roll distance (pts) for a putting stroke. Golf Dreams
+    /// style: the same stroke always rolls the same distance, so you build
+    /// real feel. Quadratic, so short putts get most of the thumb travel
+    /// (a quarter stroke ≈ 13 ft, half ≈ 52 ft, full ≈ 210 ft).
+    static let maxPutt: CGFloat = 140
     private func puttDistance(_ pull: Double) -> CGFloat {
-        0.5 + puttRange * CGFloat(pow(pull, 1.3))
+        0.4 + GameView.maxPutt * CGFloat(pull * pull)
     }
 
     private func puttPull(forDistance d: CGFloat) -> Double {
-        pow(Double(max(d - 0.5, 0.01) / puttRange), 1 / 1.3)
+        (Double(max(d - 0.4, 0.01) / GameView.maxPutt)).squareRoot()
     }
 
     /// Sideways thumb drift nudges the line: barely on putts (aim with the
@@ -264,7 +271,7 @@ struct GameView: View {
                                     club: club, carryYards: carry, lateralYards: shapeCurve(club),
                                     grounded: false, wind: Wind(speed: 0, angle: 0),
                                     course: engine.hole.course)
-        scene?.showFlightPreview(tr, from: engine.currentSpot)
+        scene?.showFlightPreview(tr, from: engine.currentSpot, ring: false)
     }
 
     // MARK: - Green reading
@@ -459,9 +466,7 @@ struct GameView: View {
             ForEach(ShotShape.allCases, id: \.self) { option in
                 Button {
                     shape = option
-                    if case .meter(let club) = engine.currentKind {
-                        previewFull(club: club, carry: club.maxYards * engine.currentLie.distanceFactor)
-                    }
+                    showDefaultAim()
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: option == .draw ? "arrow.turn.up.left"
@@ -484,7 +489,7 @@ struct GameView: View {
         HStack(spacing: 8) {
             Image(systemName: "eye.fill").font(.caption).foregroundStyle(.white.opacity(0.8))
             VStack(alignment: .leading, spacing: 1) {
-                Text(puttRead)
+                Text(partnerRead == nil ? "Read the green" : "Use your partner's read")
                     .font(.system(.caption, design: .rounded).weight(.heavy))
                     .foregroundStyle(.white)
                 if let read = partnerRead {
@@ -633,6 +638,15 @@ struct GameView: View {
         } else {
             startHoleIntro()
         }
+        if args.contains("-demoLook") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                aimOffset = 0.5
+                viewPitch = 1
+                scene?.aim(spot: engine.currentSpot, aimDir: aimU, kind: engine.currentKind,
+                           animated: true, pitch: 1)
+                showDefaultAim()
+            }
+        }
         if args.contains("-demoRead") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                 readView = true
@@ -697,8 +711,7 @@ struct GameView: View {
         showBag = false
         shape = .straight
         if readView { readView = false; scene?.setReadView(false, spot: engine.currentSpot) }
-        let puttPts = CGFloat(engine.distanceToPinYards) * Hole.pointsPerYard
-        puttRange = min(max(puttPts * 1.8 + 8, 18), 140)
+        viewPitch = 0
         if engine.shooter == 0 { partnerRead = nil }
         if let read = partnerRead, engine.currentKind == .putt {
             scene?.showPartnerRead(read.path, colorHex: read.color)
@@ -723,19 +736,23 @@ struct GameView: View {
         showDefaultAim()
     }
 
+    /// Direction only — no distance aids. Shaped shots show their curve.
     private func showDefaultAim() {
         switch engine.currentKind {
         case .meter(let club):
-            previewFull(club: club, carry: club.maxYards * engine.currentLie.distanceFactor)
+            let carry = club.maxYards * engine.currentLie.distanceFactor
+            if shape == .straight {
+                scene?.showAim(from: engine.currentSpot, direction: aimU, carryYards: nil,
+                               lineYards: carry * 0.55)
+            } else {
+                previewFull(club: club, carry: carry)
+            }
         case .chip:
-            scene?.showAim(from: engine.currentSpot, direction: aimU,
-                          carryYards: min(engine.distanceToPinYards * 0.7, 60))
+            scene?.showAim(from: engine.currentSpot, direction: aimU, carryYards: nil,
+                           lineYards: min(engine.distanceToPinYards * 0.6, 30))
         case .putt:
-            let d = CGFloat(engine.distanceToPinYards) * Hole.pointsPerYard
-            let tr = BallPhysics.putt(from: engine.currentSpot, direction: aimU,
-                                      speed: BallPhysics.puttSpeed(forDistance: d + 1),
-                                      course: engine.hole.course)
-            scene?.showPuttRead(tr, fraction: 0.8)
+            scene?.showAim(from: engine.currentSpot, direction: aimU, carryYards: nil,
+                           lineYards: min(engine.distanceToPinYards * 0.6, 12))
         }
     }
 
