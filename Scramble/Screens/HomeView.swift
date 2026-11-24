@@ -2,6 +2,9 @@ import SwiftUI
 
 struct HomeView: View {
     @EnvironmentObject private var app: AppState
+    @State private var practice: MatchConfig?
+
+    private func practiceConfig(_ mode: PracticeMode) -> MatchConfig { .practice(mode) }
 
     var body: some View {
         NavigationStack {
@@ -15,12 +18,23 @@ struct HomeView: View {
                         golfers
                         coinCard
                         NavigationLink { MatchSetupView() } label: { quickMatchCard }
+                        HStack(spacing: 12) {
+                            Button { practice = practiceConfig(.range) } label: {
+                                practiceCard("DRIVING RANGE", "Every club, unlimited balls", "scope")
+                            }
+                            Button { practice = practiceConfig(.putting) } label: {
+                                practiceCard("PUTTING GREEN", "Read it, roll it, repeat", "flag.fill")
+                            }
+                        }
                         comingSoonRow
                     }
                     .padding(18)
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
+            .fullScreenCover(item: $practice) { config in
+                GameView(config: config, demo: true) { practice = nil }
+            }
         }
         .tint(Palette.accent)
     }
@@ -84,6 +98,22 @@ struct HomeView: View {
         .foregroundStyle(Palette.ink)
         .padding(20)
         .background(Palette.accent, in: RoundedRectangle(cornerRadius: 22))
+    }
+
+    private func practiceCard(_ title: String, _ sub: String, _ icon: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Image(systemName: icon).font(.title2).foregroundStyle(Palette.accent)
+            Text(title)
+                .font(.system(.subheadline, design: .rounded).weight(.black))
+            Text(sub)
+                .font(.system(.caption, design: .rounded).weight(.semibold))
+                .opacity(0.7)
+                .multilineTextAlignment(.leading)
+        }
+        .foregroundStyle(.white)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .card()
     }
 
     private var comingSoonRow: some View {

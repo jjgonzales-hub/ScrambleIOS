@@ -326,7 +326,7 @@ struct GameView: View {
     private var hud: some View {
         VStack(spacing: 8) {
             HStack(alignment: .top) {
-                Button { confirmQuit = true } label: {
+                Button { if engine.practice != nil { onExit() } else { confirmQuit = true } } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(.white)
@@ -334,21 +334,31 @@ struct GameView: View {
                         .background(.black.opacity(0.28), in: Circle())
                 }
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("HOLE \(engine.hole.number) · PAR \(engine.hole.par)")
-                        .font(.system(.subheadline, design: .rounded).weight(.heavy))
-                    Text("\(engine.hole.name) · \(engine.hole.yards) yd")
-                        .font(.system(.caption2, design: .rounded).weight(.semibold))
-                        .opacity(0.85)
+                    if let mode = engine.practice {
+                        Text(mode == .range ? "DRIVING RANGE" : "PUTTING GREEN")
+                            .font(.system(.subheadline, design: .rounded).weight(.heavy))
+                        Text(practiceStats(mode))
+                            .font(.system(.caption2, design: .rounded).weight(.semibold))
+                            .opacity(0.85)
+                    } else {
+                        Text("HOLE \(engine.hole.number) · PAR \(engine.hole.par)")
+                            .font(.system(.subheadline, design: .rounded).weight(.heavy))
+                        Text("\(engine.hole.name) · \(engine.hole.yards) yd")
+                            .font(.system(.caption2, design: .rounded).weight(.semibold))
+                            .opacity(0.85)
+                    }
                 }
                 .foregroundStyle(.white)
                 .shadow(color: .black.opacity(0.3), radius: 3, y: 1)
                 Spacer()
                 windBadge
             }
-            HStack(spacing: 8) {
-                scoreChip(team: 0)
-                scoreChip(team: 1)
-                Spacer()
+            if engine.practice == nil {
+                HStack(spacing: 8) {
+                    scoreChip(team: 0)
+                    scoreChip(team: 1)
+                    Spacer()
+                }
             }
         }
         .padding(.horizontal, 14)
@@ -371,6 +381,18 @@ struct GameView: View {
         .foregroundStyle(engine.wind.speed >= 10 ? Color(hex: 0xFFD27A) : .white)
         .frame(width: 62, height: 54)
         .background(.black.opacity(0.28), in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    private func practiceStats(_ mode: PracticeMode) -> String {
+        switch mode {
+        case .range:
+            return engine.practiceShots == 0 ? "Hit as many as you like"
+                : "\(engine.practiceShots) ball\(engine.practiceShots == 1 ? "" : "s") hit"
+        case .putting:
+            let n = engine.practiceShots, m = engine.practiceMakes
+            return n == 0 ? "Pick a distance below"
+                : "Made \(m) of \(n) · \(Int((Double(m) / Double(n) * 100).rounded()))%"
+        }
     }
 
     private func scoreChip(team: Int) -> some View {
@@ -415,6 +437,7 @@ struct GameView: View {
             if showBag { bagRow }
             if case .meter = engine.currentKind { shapeRow }
             if engine.currentKind == .putt { puttRow }
+            if engine.practice == .putting { puttPracticeRow }
             HStack(alignment: .center, spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(engine.currentPlayer.name)
@@ -493,7 +516,7 @@ struct GameView: View {
                     .font(.system(.caption, design: .rounded).weight(.heavy))
                     .foregroundStyle(.white)
                 if let read = partnerRead {
-                    Text("\(read.name)'s line is on the green")
+                    Text(engine.practice != nil ? "Your last line is on the green" : "\(read.name)'s line is on the green")
                         .font(.system(.caption2, design: .rounded).weight(.bold))
                         .foregroundStyle(Color(hex: read.color))
                 }
@@ -509,6 +532,39 @@ struct GameView: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 7)
                     .background(readView ? .white : .white.opacity(0.16), in: Capsule())
+            }
+        }
+    }
+
+    private var puttPracticeRow: some View {
+        HStack(spacing: 5) {
+            ForEach([5, 10, 20, 40, 0], id: \.self) { ft in
+                let on = (engine.practicePuttFeet ?? 0) == ft
+                Button {
+                    engine.practicePuttFeet = ft == 0 ? nil : ft
+                    engine.practiceRepeat = false
+                    partnerRead = nil
+                    engine.nextPracticeBall()
+                    prepareTurn(animated: true)
+                } label: {
+                    Text(ft == 0 ? "Any" : "\(ft)ft")
+                        .font(.system(.caption, design: .rounded).weight(.heavy))
+                        .foregroundStyle(on ? Palette.ink : .white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                        .background(on ? .white : .white.opacity(0.12), in: RoundedRectangle(cornerRadius: 9))
+                }
+            }
+            Button {
+                engine.practiceRepeat.toggle()
+            } label: {
+                Image(systemName: "repeat")
+                    .font(.system(size: 12, weight: .heavy))
+                    .foregroundStyle(engine.practiceRepeat ? Palette.ink : .white)
+                    .frame(width: 40)
+                    .padding(.vertical, 6)
+                    .background(engine.practiceRepeat ? Palette.accent : .white.opacity(0.12),
+                                in: RoundedRectangle(cornerRadius: 9))
             }
         }
     }
@@ -632,7 +688,7 @@ struct GameView: View {
             engine.teamLie[0] = .green
         }
         if args.contains("-autoplay") { autoplay(.holeIntro) }
-        if args.contains("-skipIntro") {
+        if args.contains("-skipIntro") || engine.practice != nil {
             prepareTurn(animated: false)
             engine.beginHole()
         } else {
@@ -698,7 +754,7 @@ struct GameView: View {
             }
         case .aiming:
             prepareTurn(animated: true)
-            showTurnBanner()
+            if engine.practice == nil { showTurnBanner() }
         default:
             break
         }
@@ -712,7 +768,9 @@ struct GameView: View {
         shape = .straight
         if readView { readView = false; scene?.setReadView(false, spot: engine.currentSpot) }
         viewPitch = 0
-        if engine.shooter == 0 { partnerRead = nil }
+        if engine.shooter == 0 && !(engine.practice == .putting && engine.practiceRepeat) {
+            partnerRead = nil
+        }
         if let read = partnerRead, engine.currentKind == .putt {
             scene?.showPartnerRead(read.path, colorHex: read.color)
         } else {
@@ -728,7 +786,7 @@ struct GameView: View {
         }
         // The other team's ball.
         let other = 1 - engine.activeTeam
-        if !engine.holedOut[other] && engine.teamLie[other] != .tee {
+        if engine.practice == nil && !engine.holedOut[other] && engine.teamLie[other] != .tee {
             scene?.addMarker(at: engine.teamSpot[other], teamColorHex: engine.teams[other].colorHex)
         }
         scene?.placeBall(at: engine.currentSpot, onTee: engine.currentLie == .tee)

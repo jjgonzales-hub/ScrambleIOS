@@ -170,6 +170,7 @@ final class Course3DScene: NSObject {
         buildWater()
         buildTeeBox()
         buildPinAndCup()
+        buildPracticeTargets()
         buildGreenGrid()
         buildVegetation()
         buildRoughGrass()
@@ -464,6 +465,57 @@ final class Course3DScene: NSObject {
         scene.rootNode.addChildNode(flagNode)
     }
 
+    /// Driving range target greens: a disc of green, a flag, and a big
+    /// yardage sign facing the tee.
+    private func buildPracticeTargets() {
+        let flagColors: [UInt32] = [0xF0705E, 0xFFD27A, 0x4F9BE0, 0xB97FE0, 0xFFFFFF]
+        for (i, t) in hole.practiceTargets.enumerated() {
+            let disc = SCNNode(geometry: SCNCylinder(radius: 16, height: 0.06))
+            disc.geometry?.firstMaterial = Course3DScene.material(0x93D86A)
+            disc.position = world(t.center, h: 0.06)
+            disc.castsShadow = false
+            scene.rootNode.addChildNode(disc)
+            let ring = SCNNode(geometry: SCNTube(innerRadius: 16, outerRadius: 17.2, height: 0.07))
+            ring.geometry?.firstMaterial = Course3DScene.material(0x7DC25A)
+            ring.position = world(t.center, h: 0.06)
+            scene.rootNode.addChildNode(ring)
+
+            let flag = SCNNode()
+            let pole = SCNNode(geometry: SCNCylinder(radius: 0.12, height: 9))
+            pole.geometry?.firstMaterial = Course3DScene.material(0xF7F7F2)
+            pole.position.y = 4.5
+            flag.addChildNode(pole)
+            let cloth = SCNNode(geometry: SCNBox(width: 3, height: 1.8, length: 0.05, chamferRadius: 0))
+            cloth.geometry?.firstMaterial = Course3DScene.material(flagColors[i % flagColors.count])
+            cloth.position = SCNVector3(1.55, 8, 0)
+            flag.addChildNode(cloth)
+            flag.position = world(t.center, h: 0)
+            scene.rootNode.addChildNode(flag)
+
+            let text = SCNText(string: "\(t.yards)", extrusionDepth: 0.6)
+            text.font = UIFont.systemFont(ofSize: 10, weight: .black)
+            text.flatness = 0.2
+            text.firstMaterial = GolferRig.unlit(.white)
+            let label = SCNNode(geometry: text)
+            let (mn, mx) = label.boundingBox
+            label.pivot = SCNMatrix4MakeTranslation((mx.x + mn.x) / 2, mn.y, 0)
+            let side = CGVector(dx: t.center.x < hole.tee.x ? -24 : 24, dy: 0)
+            label.position = world(t.center + side + CGVector(dx: 0, dy: -0.6), h: 3.2)
+            label.scale = SCNVector3(0.55, 0.55, 0.55)
+            let board = SCNNode(geometry: SCNBox(width: 12, height: 6, length: 0.3, chamferRadius: 0.8))
+            board.geometry?.firstMaterial = Course3DScene.material(0x17382A)
+            board.position = world(t.center + side, h: 5.8)
+            for n in [label, board] {
+                // Face back toward the tee (world +z).
+                scene.rootNode.addChildNode(n)
+            }
+            let legs = SCNNode(geometry: SCNBox(width: 0.4, height: 4, length: 0.4, chamferRadius: 0))
+            legs.geometry?.firstMaterial = Course3DScene.material(0x5C4632)
+            legs.position = world(t.center + side, h: 1.5)
+            scene.rootNode.addChildNode(legs)
+        }
+    }
+
     /// Slope steepness → grid color, PGA 2K-style: blue flat, green,
     /// yellow, orange, red severe.
     private func slopeColor(_ s: CGFloat) -> SIMD3<Float> {
@@ -599,7 +651,7 @@ final class Course3DScene: NSObject {
                 let end = p + slope.normalized * min(1.5 + strength * 0.55, 4.5)
                 let cycle = max(Double(7 / max(strength, 1)), 0.8)
                 _ = c
-                let geo = SCNSphere(radius: 0.28)
+                let geo = SCNSphere(radius: 0.2)
                 geo.segmentCount = 10
                 geo.firstMaterial = GolferRig.unlit(UIColor.white)
                 let dot = SCNNode(geometry: geo)

@@ -27,6 +27,8 @@ struct Hole {
     let cupRadius: CGFloat = 1.1
     /// Contours on the green: bumps (+) and hollows (−) on top of the tilt.
     let greenFeatures: [(center: CGPoint, radius: CGFloat, height: CGFloat)]
+    /// Driving range target greens (visual): center and yardage.
+    let practiceTargets: [(center: CGPoint, yards: Int)]
     /// Converts green height gradient into rolling acceleration.
     static let slopeK: CGFloat = 60
 
@@ -49,6 +51,7 @@ struct Hole {
          bunkers: [(center: CGPoint, radius: CGFloat)], waterRects: [CGRect],
          treeMarginX: CGFloat, treeZones: [CGRect] = [], greenSlope: CGVector,
          greenFeatures: [(center: CGPoint, radius: CGFloat, height: CGFloat)] = [],
+         practiceTargets: [(center: CGPoint, yards: Int)] = [],
          corridor: CGFloat = 78) {
         self.number = number
         self.name = name
@@ -66,6 +69,7 @@ struct Hole {
         self.greenSlope = greenSlope
         self.corridor = corridor
         self.greenFeatures = greenFeatures
+        self.practiceTargets = practiceTargets
 
         let path = UIBezierPath()
         var samples: [CGPoint] = []
@@ -194,6 +198,53 @@ struct Hole {
     // MARK: - The course: three holes
 
     static let course: [Hole] = [.one(), .two(), .three()]
+
+    // MARK: - Practice facility
+
+    /// Wide-open range: tee at the bottom, target greens every 50 yards,
+    /// the far flag at 300.
+    static func range() -> Hole {
+        let tee = CGPoint(x: 380, y: 40)
+        func at(_ yds: Int, _ dx: CGFloat) -> CGPoint { CGPoint(x: tee.x + dx, y: tee.y + CGFloat(yds) * 2) }
+        return Hole(
+            number: 0, name: "Driving Range", par: 0,
+            sceneSize: CGSize(width: 760, height: 760),
+            tee: tee, pin: at(300, 0),
+            greenRadius: 24, fringeWidth: 8,
+            fairway: [(CGPoint(x: 380, y: 70), CGPoint(x: 380, y: 260),
+                       CGPoint(x: 380, y: 460), CGPoint(x: 380, y: 610))],
+            fairwayWidth: 300,
+            bunkers: [(at(150, 46), 12), (at(200, -60), 14), (at(100, -30), 10)],
+            waterRects: [],
+            treeMarginX: 36,
+            greenSlope: CGVector(dx: 0.5, dy: -0.4),
+            practiceTargets: [(at(50, -20), 50), (at(100, 40), 100), (at(150, -10), 150),
+                              (at(200, 50), 200), (at(250, -40), 250)],
+            corridor: 340
+        )
+    }
+
+    /// A big, heavily contoured practice green.
+    static func puttingGreen() -> Hole {
+        Hole(
+            number: 0, name: "Putting Green", par: 0,
+            sceneSize: CGSize(width: 320, height: 320),
+            tee: CGPoint(x: 160, y: 30),
+            pin: CGPoint(x: 160, y: 175),
+            greenRadius: 100, fringeWidth: 12,
+            fairway: [(CGPoint(x: 160, y: 40), CGPoint(x: 160, y: 50),
+                       CGPoint(x: 160, y: 60), CGPoint(x: 160, y: 70))],
+            fairwayWidth: 30,
+            bunkers: [], waterRects: [],
+            treeMarginX: 18,
+            greenSlope: CGVector(dx: 1.6, dy: -1.1),
+            greenFeatures: [(CGPoint(x: 118, y: 212), 30, 2.0),
+                            (CGPoint(x: 206, y: 138), 26, -1.6),
+                            (CGPoint(x: 192, y: 226), 22, 1.4),
+                            (CGPoint(x: 114, y: 128), 24, -1.2)],
+            corridor: 400
+        )
+    }
 
     /// Hole 1 — "The Opener". Par 4, gentle S-curve, pond right, three
     /// bunkers.

@@ -9,7 +9,10 @@ struct ScrambleApp: App {
             Group {
                 // "-demoHole" jumps straight onto the tee — used for quick
                 // simulator checks without tapping through setup.
-                if CommandLine.arguments.contains("-demoHole") {
+                if CommandLine.arguments.contains("-practiceRange") || CommandLine.arguments.contains("-practicePutt") {
+                    GameView(config: .practice(CommandLine.arguments.contains("-practiceRange") ? .range : .putting),
+                             demo: true) { }
+                } else if CommandLine.arguments.contains("-demoHole") {
                     GameView(config: .demo(), demo: true) { }
                 } else {
                     HomeView()
@@ -23,6 +26,15 @@ struct ScrambleApp: App {
 }
 
 extension MatchConfig {
+    static func practice(_ mode: PracticeMode) -> MatchConfig {
+        let me = Player(name: "You", emoji: "🏌️", character: "male_a")
+        let pal = Player(name: "Sam", emoji: "🧢", character: "female_b")
+        let team = Team(name: "Practice", players: [me, pal], colorHex: 0x4F9BE0)
+        return MatchConfig(teams: [team, team], wager: 0,
+                           holes: [mode == .range ? Hole.range() : Hole.puttingGreen()],
+                           practice: mode)
+    }
+
     static func demo() -> MatchConfig {
         let players = [Player(name: "You", emoji: "🏌️", character: "male_a"),
                        Player(name: "Sam", emoji: "🧢", character: "female_b"),

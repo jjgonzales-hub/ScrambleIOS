@@ -22,6 +22,16 @@ final class MatchEngine: ObservableObject {
     let holes: [Hole]
     let teams: [Team]
     let wager: Int
+    let practice: PracticeMode?
+
+    // Practice facility state
+    @Published var practiceShots = 0
+    @Published var practiceMakes = 0
+    /// Putting practice distance in feet (nil = random 5–45).
+    @Published var practicePuttFeet: Int?
+    /// Re-hit the same putt (your last line stays on the green).
+    @Published var practiceRepeat = false
+    private var lastPracticeSpot: CGPoint?
 
     @Published var holeIndex = 0
     @Published var wind: Wind
@@ -59,6 +69,46 @@ final class MatchEngine: ObservableObject {
         teamLie = [.tee, .tee]
         scorecard = Array(repeating: Array(repeating: nil, count: config.holes.count),
                           count: 2)
+        practice = config.practice
+        if practice == .putting {
+            let spot = randomPuttSpot()
+            teamSpot = [spot, spot]
+            teamLie = [.green, .green]
+            lastPracticeSpot = spot
+        }
+    }
+
+    // MARK: - Practice
+
+    /// Reset for the next practice ball.
+    func nextPracticeBall() {
+        roundShots = []
+        lastOutcome = nil
+        clubOverride = nil
+        shooter = 0
+        activeTeam = 0
+        switch practice {
+        case .putting:
+            let spot = practiceRepeat ? (lastPracticeSpot ?? randomPuttSpot()) : randomPuttSpot()
+            teamSpot[0] = spot
+            teamLie[0] = .green
+            lastPracticeSpot = spot
+        default:
+            teamSpot[0] = hole.tee
+            teamLie[0] = .tee
+        }
+        phase = .aiming
+    }
+
+    func randomPuttSpot() -> CGPoint {
+        let ft = Double(practicePuttFeet ?? Int.random(in: 5...45))
+        let d = CGFloat(ft / 3) * Hole.pointsPerYard
+        for _ in 0..<60 {
+            let a = CGFloat.random(in: 0..<(2 * .pi))
+            let p = CGPoint(x: hole.pin.x + cos(a) * d, y: hole.pin.y + sin(a) * d)
+            if hole.lie(at: p) == .green { return p }
+        }
+        return CGPoint(x: hole.pin.x, y: hole.pin.y - d)
     }
 
     // MARK: - Current turn info
@@ -209,6 +259,21 @@ final class MatchEngine: ObservableObject {
             ratingLine = "WET · +1 PENALTY"
         }
 
+        if practice != nil {
+            practiceShots += 1
+            if holed { practiceMakes += 1 }
+            message = ""
+            if case .meter = kind, let r = result {
+                // Range readout: carry, total, and how far offline.
+                let axis = CGVector(from: hole.tee, to: hole.pin).normalized
+                let v = CGVector(from: start, to: tr.end)
+                let total = Int(v.length / Hole.pointsPerYard)
+                let off = Int((v.dot(axis.perpendicularRight) / Hole.pointsPerYard).rounded())
+                let side = off == 0 ? "ON LINE" : "\(abs(off)) \(off > 0 ? "R" : "L")"
+                ratingLine = "\(r.rating.rawValue) · \(Int(carryYds ?? 0)) CARRY · \(total) TOTAL · \(side)"
+            }
+        }
+
         let outcome = ShotOutcome(
             playerName: name,
             teamIndex: activeTeam,
@@ -239,6 +304,7 @@ final class MatchEngine: ObservableObject {
 
     /// Advance after the result card is dismissed.
     func advanceAfterResult() {
+        if practice != nil { nextPracticeBall(); return }
         guard let last = lastOutcome else { return }
         clubOverride = nil
 

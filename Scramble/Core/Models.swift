@@ -21,6 +21,13 @@ struct MatchConfig: Identifiable {
     let teams: [Team]
     let wager: Int
     let holes: [Hole]
+    var practice: PracticeMode? = nil
+}
+
+/// Practice facility modes.
+enum PracticeMode: Equatable {
+    case range
+    case putting
 }
 
 /// The bag — Golf Dreams style: you pick the club, each shows its carry,
