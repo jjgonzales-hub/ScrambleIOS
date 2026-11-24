@@ -167,38 +167,79 @@ final class GolferRig {
     // MARK: - Clubs
 
     private func buildClubs() {
-        let shaftMat = GolferRig.lit(UIColor(hex: 0xC9CDD2))
-        let gripMat = GolferRig.lit(UIColor(hex: 0x2C2F33))
+        // Model units (the character is ~0.67 tall). Shaft hangs down -Y;
+        // the head's face points +X (the target), toe toward +Z.
+        let chrome = SCNMaterial()
+        chrome.lightingModel = .physicallyBased
+        chrome.diffuse.contents = UIColor(white: 0.85, alpha: 1)
+        chrome.metalness.contents = 1.0
+        chrome.roughness.contents = 0.2
+        let rubber = SCNMaterial()
+        rubber.diffuse.contents = UIColor(hex: 0x1C1F23)
+        rubber.lightingModel = .blinn
+        rubber.specular.contents = UIColor(white: 0.15, alpha: 1)
+        let carbon = SCNMaterial()
+        carbon.lightingModel = .physicallyBased
+        carbon.diffuse.contents = UIColor(hex: 0x1A1F27)
+        carbon.metalness.contents = 0.6
+        carbon.roughness.contents = 0.18
+        let satin = SCNMaterial()
+        satin.lightingModel = .physicallyBased
+        satin.diffuse.contents = UIColor(white: 0.7, alpha: 1)
+        satin.metalness.contents = 0.95
+        satin.roughness.contents = 0.38
+
         for style in [ClubStyle.wood, .iron, .putter] {
             let shaft = SCNNode()
-            let rod = SCNNode(geometry: SCNCylinder(radius: 0.006, height: 1))
-            rod.geometry?.firstMaterial = shaftMat
+            // First child = the rod; calibrateClub stretches it to length.
+            let rod = SCNNode(geometry: SCNCone(topRadius: 0.0075, bottomRadius: 0.005, height: 1))
+            rod.geometry?.firstMaterial = chrome
             rod.position = SCNVector3(0, -0.5, 0)
             shaft.addChildNode(rod)
-            let gripGeo = SCNCylinder(radius: 0.009, height: 0.22)
-            gripGeo.firstMaterial = gripMat
-            let gripNode = SCNNode(geometry: gripGeo)
-            gripNode.position = SCNVector3(0, -0.11, 0)
-            shaft.addChildNode(gripNode)
+            let grip = SCNNode(geometry: SCNCone(topRadius: 0.0098, bottomRadius: 0.0072, height: 0.24))
+            grip.geometry?.firstMaterial = rubber
+            grip.position = SCNVector3(0, -0.12, 0)
+            shaft.addChildNode(grip)
 
-            let headGeo: SCNGeometry
+            let head = SCNNode()
+            let hosel = SCNNode(geometry: SCNCone(topRadius: 0.0042, bottomRadius: 0.0062, height: 0.03))
+            hosel.geometry?.firstMaterial = style == .wood ? carbon : chrome
+            hosel.position = SCNVector3(0, 0.012, 0)
+            head.addChildNode(hosel)
             switch style {
             case .wood:
-                headGeo = SCNBox(width: 0.05, height: 0.03, length: 0.042, chamferRadius: 0.014)
-                headGeo.firstMaterial = GolferRig.lit(UIColor(hex: 0x30343A), shiny: true)
+                // Big rounded 460cc-style head with a silver face.
+                let body = SCNNode(geometry: SCNSphere(radius: 0.03))
+                body.geometry?.firstMaterial = carbon
+                body.scale = SCNVector3(0.92, 0.55, 1.18)
+                body.position = SCNVector3(-0.006, -0.004, 0.028)
+                head.addChildNode(body)
+                let face = SCNNode(geometry: SCNBox(width: 0.003, height: 0.026, length: 0.052, chamferRadius: 0.0015))
+                face.geometry?.firstMaterial = satin
+                face.position = SCNVector3(0.021, -0.004, 0.028)
+                head.addChildNode(face)
             case .iron:
-                headGeo = SCNBox(width: 0.042, height: 0.026, length: 0.009, chamferRadius: 0.003)
-                headGeo.firstMaterial = GolferRig.lit(UIColor(hex: 0xD6DADF), shiny: true)
+                // Forged blade with a cavity back.
+                let blade = SCNNode(geometry: SCNBox(width: 0.007, height: 0.026, length: 0.05, chamferRadius: 0.002))
+                blade.geometry?.firstMaterial = chrome
+                blade.position = SCNVector3(0.002, -0.006, 0.026)
+                blade.eulerAngles.z = 0.35        // loft
+                head.addChildNode(blade)
+                let sole = SCNNode(geometry: SCNBox(width: 0.012, height: 0.008, length: 0.048, chamferRadius: 0.003))
+                sole.geometry?.firstMaterial = satin
+                sole.position = SCNVector3(-0.002, -0.017, 0.026)
+                head.addChildNode(sole)
             case .putter:
-                headGeo = SCNBox(width: 0.048, height: 0.016, length: 0.016, chamferRadius: 0.004)
-                headGeo.firstMaterial = GolferRig.lit(UIColor(hex: 0x9EA4AB), shiny: true)
+                let blade = SCNNode(geometry: SCNBox(width: 0.01, height: 0.012, length: 0.05, chamferRadius: 0.002))
+                blade.geometry?.firstMaterial = satin
+                blade.position = SCNVector3(0, -0.006, 0.024)
+                head.addChildNode(blade)
             }
-            let headNode = SCNNode(geometry: headGeo)
-            // Toe points toward the target (+X) and sits just past the shaft.
-            headNode.position = SCNVector3(0.016, -1, 0)
-            shaft.addChildNode(headNode)
+            // Cartoon proportions: chunky heads to match chunky golfers.
+            head.scale = SCNVector3(1.5, 1.5, 1.5)
+            shaft.addChildNode(head)
             shafts[style] = shaft
-            clubHeads[style] = headNode
+            clubHeads[style] = head
             clubNode.addChildNode(shaft)
         }
     }
@@ -227,7 +268,7 @@ final class GolferRig {
             shaftLength[style] = len
             shaft.childNodes.first?.scale = SCNVector3(1, len, 1)
             shaft.childNodes.first?.position = SCNVector3(0, -len / 2, 0)
-            clubHeads[style]?.position = SCNVector3(0.016, -len, 0)
+            clubHeads[style]?.position = SCNVector3(0, -len, 0)
         }
     }
 

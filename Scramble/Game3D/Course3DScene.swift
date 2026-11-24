@@ -22,6 +22,12 @@ final class Course3DScene: NSObject {
     private let previewRoot = SCNNode()
     private let readRoot = SCNNode()       // partner's putt line
     private let tuftRoot = SCNNode()
+    /// On the green the golfer steps away and it's just you and the putter.
+    private let putterPivot = SCNNode()
+    private var putterAngle: Float = 0
+    private var putterTarget: Float = 0
+    private var putterAxis = SIMD3<Float>(1, 0, 0)
+    private var putterBase = simd_quatf(angle: 0, axis: SIMD3(0, 1, 0))
     private let tracerRoot = SCNNode()
     private let greenGridNode = SCNNode()
     private let flagPivot = SCNNode()
@@ -195,6 +201,7 @@ final class Course3DScene: NSObject {
         scene.rootNode.addChildNode(teePeg)
 
         scene.rootNode.addChildNode(golfer.node)
+        buildPutter()
         scene.rootNode.addChildNode(previewRoot)
         scene.rootNode.addChildNode(readRoot)
         scene.rootNode.addChildNode(tracerRoot)
@@ -346,7 +353,7 @@ final class Course3DScene: NSObject {
         h *= (1 - sGreen) * (1 - sTee) * (1 - calm)
         h += 1.6 * sGreen
         // The green's real contours (same field the ball rolls on).
-        h += sGreen * hole.greenHeight(at: p)
+        h += sGreen * hole.greenHeight(at: p) * 1.8
         h += 1.1 * sTee
 
         for rect in hole.waterRects {
@@ -457,47 +464,162 @@ final class Course3DScene: NSObject {
         scene.rootNode.addChildNode(flagNode)
     }
 
-    /// Green read: a field of dots that flow downhill — direction is the
-    /// local break, speed and brightness are how strong it is. Follows the
-    /// green's contours, so ridges and hollows read at a glance.
+    /// Slope steepness → grid color, PGA 2K-style: blue flat, green,
+    /// yellow, orange, red severe.
+    private func slopeColor(_ s: CGFloat) -> SIMD3<Float> {
+        let stops: [(CGFloat, UInt32)] = [(0, 0x5BC0F8), (2.2, 0x6FE0A8), (3.6, 0xF2E14C),
+                                          (5.0, 0xF5A142), (6.4, 0xE8483C)]
+        if s <= stops[0].0 { return rgb(stops[0].1) }
+        for i in 1..<stops.count where s <= stops[i].0 {
+            let t = Float((s - stops[i - 1].0) / (stops[i].0 - stops[i - 1].0))
+            return simd_mix(rgb(stops[i - 1].1), rgb(stops[i].1), SIMD3(repeating: t))
+        }
+        return rgb(stops.last!.1)
+    }
+
+    /// The green gets its own fine mesh (1.5 pt cells) so its contours are
+    /// smooth and exact, then a 2K-style grid drapes over it: lines that
+    /// bend with every rise and dip, colored by steepness, plus dots that
+    /// flow downhill. The grid shows only while putting.
     private func buildGreenGrid() {
-        var index = 0
-        var y = hole.pin.y - hole.greenRadius
-        var row = 0
-        while y <= hole.pin.y + hole.greenRadius {
-            var x = hole.pin.x - hole.greenRadius + (row % 2 == 0 ? 0 : 3.5)
-            while x <= hole.pin.x + hole.greenRadius {
+        let pin = hole.pin
+        let outer = hole.greenRadius + hole.fringeWidth
+        let step: CGFloat = 1.5
+        let n = Int(ceil(outer * 2 / step)) + 1
+        let origin = CGPoint(x: pin.x - outer, y: pin.y - outer)
+
+        // ---- surface ----
+        var pos: [SCNVector3] = [], nrm: [SCNVector3] = [], col: [Float] = []
+        var index = [Int](repeating: -1, count: n * n)
+        for j in 0..<n {
+            for i in 0..<n {
+                let p = CGPoint(x: origin.x + CGFloat(i) * step, y: origin.y + CGFloat(j) * step)
+                guard p.distance(to: pin) <= outer + step else { continue }
+                index[j * n + i] = pos.count
+                pos.append(world(p, h: 0.1))
+                let e: CGFloat = 0.75
+                let hx = groundHeight(CGPoint(x: p.x + e, y: p.y)) - groundHeight(CGPoint(x: p.x - e, y: p.y))
+                let hy = groundHeight(CGPoint(x: p.x, y: p.y + e)) - groundHeight(CGPoint(x: p.x, y: p.y - e))
+                let nn = simd_normalize(SIMD3<Float>(Float(-hx), Float(2 * e), Float(hy)))
+                nrm.append(SCNVector3(nn.x, nn.y, nn.z))
+                let d = p.distance(to: pin)
+                var c: SIMD3<Float>
+                if d <= hole.greenRadius {
+                    let stripe = Int(floor((p.x + p.y) / 7)) % 2 == 0
+                    c = stripe ? rgb(0x8BD064) : rgb(0x97D96E)
+                } else {
+                    c = rgb(0x7DC25A)
+                }
+                col += [c.x, c.y, c.z, 1]
+            }
+        }
+        var tris: [Int32] = []
+        for j in 0..<(n - 1) {
+            for i in 0..<(n - 1) {
+                let a = index[j * n + i], b = index[j * n + i + 1]
+                let c = index[(j + 1) * n + i], d = index[(j + 1) * n + i + 1]
+                guard a >= 0, b >= 0, c >= 0, d >= 0 else { continue }
+                tris += [Int32(a), Int32(b), Int32(d), Int32(a), Int32(d), Int32(c)]
+            }
+        }
+        let surface = SCNGeometry(
+            sources: [SCNGeometrySource(vertices: pos), SCNGeometrySource(normals: nrm),
+                      SCNGeometrySource(data: col.withUnsafeBufferPointer { Data(buffer: $0) },
+                                        semantic: .color, vectorCount: pos.count,
+                                        usesFloatComponents: true, componentsPerVector: 4,
+                                        bytesPerComponent: 4, dataOffset: 0, dataStride: 16)],
+            elements: [SCNGeometryElement(indices: tris, primitiveType: .triangles)])
+        let sm = SCNMaterial()
+        sm.diffuse.contents = UIColor.white
+        sm.lightingModel = .lambert
+        surface.firstMaterial = sm
+        let surfaceNode = SCNNode(geometry: surface)
+        surfaceNode.castsShadow = false
+        scene.rootNode.addChildNode(surfaceNode)
+
+        // ---- draped grid ----
+        var gp: [SCNVector3] = [], gc: [Float] = [], gi: [Int32] = []
+        let spacing: CGFloat = 3
+        let half: CGFloat = 0.07
+        func ribbon(_ from: CGPoint, _ dir: CGVector, length: CGFloat) {
+            let side = dir.perpendicularRight * half
+            var t: CGFloat = 0
+            var prev: (Int32, Int32)?
+            while t <= length {
+                let p = from + dir * t
+                t += 0.9
+                guard p.distance(to: pin) <= hole.greenRadius - 0.5 else { prev = nil; continue }
+                let c = slopeColor(hole.slope(at: p).length)
+                let l = world(p + side, h: 0.2), r = world(p + side * -1, h: 0.2)
+                let base = Int32(gp.count)
+                gp += [l, r]
+                gc += [c.x, c.y, c.z, 1, c.x, c.y, c.z, 1]
+                if let (pl, pr) = prev { gi += [pl, pr, base + 1, pl, base + 1, base] }
+                prev = (base, base + 1)
+            }
+        }
+        let span = hole.greenRadius * 2
+        var k = -hole.greenRadius
+        while k <= hole.greenRadius {
+            ribbon(CGPoint(x: pin.x - hole.greenRadius, y: pin.y + k), CGVector(dx: 1, dy: 0), length: span)
+            ribbon(CGPoint(x: pin.x + k, y: pin.y - hole.greenRadius), CGVector(dx: 0, dy: 1), length: span)
+            k += spacing
+        }
+        if !gi.isEmpty {
+            let grid = SCNGeometry(
+                sources: [SCNGeometrySource(vertices: gp),
+                          SCNGeometrySource(data: gc.withUnsafeBufferPointer { Data(buffer: $0) },
+                                            semantic: .color, vectorCount: gp.count,
+                                            usesFloatComponents: true, componentsPerVector: 4,
+                                            bytesPerComponent: 4, dataOffset: 0, dataStride: 16)],
+                elements: [SCNGeometryElement(indices: gi, primitiveType: .triangles)])
+            let gm = SCNMaterial()
+            gm.diffuse.contents = UIColor.white
+            gm.lightingModel = .constant
+            gm.isDoubleSided = true
+            gm.transparency = 0.75
+            grid.firstMaterial = gm
+            let gridNode = SCNNode(geometry: grid)
+            gridNode.castsShadow = false
+            greenGridNode.addChildNode(gridNode)
+        }
+
+        // ---- downhill flow dots on the grid ----
+        var idx = 0
+        var y = pin.y - hole.greenRadius
+        while y <= pin.y + hole.greenRadius {
+            var x = pin.x - hole.greenRadius
+            while x <= pin.x + hole.greenRadius {
                 let p = CGPoint(x: x, y: y)
-                x += 7
-                guard hole.lie(at: p) == .green, p.distance(to: hole.pin) > 2.5 else { continue }
+                x += 7.5
+                guard p.distance(to: pin) <= hole.greenRadius - 2, p.distance(to: pin) > 2 else { continue }
                 let slope = hole.slope(at: p)
                 let strength = slope.length
-                let travel = slope.normalized * min(2.5 + strength * 0.7, 6)
-                let end = p + travel
-                let cycle = max(Double(9 / max(strength, 1.2)), 0.9)
-                let geo = SCNCylinder(radius: 0.36, height: 0.02)
-                let alpha = min(0.45 + strength / 10, 0.95)
-                geo.firstMaterial = GolferRig.unlit(UIColor.white.withAlphaComponent(alpha))
+                let c = slopeColor(strength)
+                let end = p + slope.normalized * min(1.5 + strength * 0.55, 4.5)
+                let cycle = max(Double(7 / max(strength, 1)), 0.8)
+                _ = c
+                let geo = SCNSphere(radius: 0.28)
+                geo.segmentCount = 10
+                geo.firstMaterial = GolferRig.unlit(UIColor.white)
                 let dot = SCNNode(geometry: geo)
-                let start = world(p, h: 0.2)
-                let stop = world(end, h: 0.2)
+                let start = world(p, h: 0.32), stop = world(end, h: 0.32)
                 dot.position = start
                 dot.opacity = 0
-                let move = SCNAction.move(to: stop, duration: cycle)
-                let fades = SCNAction.sequence([
-                    .fadeOpacity(to: 1, duration: cycle * 0.25),
-                    .wait(duration: cycle * 0.45),
-                    .fadeOpacity(to: 0, duration: cycle * 0.3)
-                ])
+                dot.castsShadow = false
                 dot.runAction(.sequence([
-                    .wait(duration: Double(index % 6) * cycle / 6),
-                    .repeatForever(.sequence([.group([move, fades]), .move(to: start, duration: 0)]))
+                    .wait(duration: Double(idx % 6) * cycle / 6),
+                    .repeatForever(.sequence([
+                        .group([.move(to: stop, duration: cycle),
+                                .sequence([.fadeOpacity(to: 1, duration: cycle * 0.2),
+                                           .wait(duration: cycle * 0.5),
+                                           .fadeOpacity(to: 0, duration: cycle * 0.3)])]),
+                        .move(to: start, duration: 0)]))
                 ]))
                 greenGridNode.addChildNode(dot)
-                index += 1
+                idx += 1
             }
-            y += 6.5
-            row += 1
+            y += 7.5
         }
         greenGridNode.isHidden = true
         scene.rootNode.addChildNode(greenGridNode)
@@ -752,6 +874,100 @@ final class Course3DScene: NSObject {
         }
     }
 
+    // MARK: - Putter
+
+    /// A milled blade putter: tapered chrome shaft, rubber grip, hosel and
+    /// a blade with a white sight line. Built hanging down local -Y from
+    /// the hands, blade width along local Z.
+    private func buildPutter() {
+        let length: CGFloat = 3.4
+        let chrome = SCNMaterial()
+        chrome.lightingModel = .physicallyBased
+        chrome.diffuse.contents = UIColor(white: 0.82, alpha: 1)
+        chrome.metalness.contents = 1.0
+        chrome.roughness.contents = 0.22
+
+        let shaft = SCNNode(geometry: SCNCone(topRadius: 0.05, bottomRadius: 0.035, height: length))
+        shaft.geometry?.firstMaterial = chrome
+        shaft.position = SCNVector3(0, Float(-length / 2), 0)
+        putterPivot.addChildNode(shaft)
+
+        let grip = SCNNode(geometry: SCNCone(topRadius: 0.11, bottomRadius: 0.075, height: 1.0))
+        let gm = SCNMaterial()
+        gm.diffuse.contents = UIColor(hex: 0x1E2226)
+        gm.lightingModel = .blinn
+        gm.specular.contents = UIColor(white: 0.2, alpha: 1)
+        grip.geometry?.firstMaterial = gm
+        grip.position = SCNVector3(0, -0.5, 0)
+        putterPivot.addChildNode(grip)
+
+        let headRoot = SCNNode()
+        headRoot.position = SCNVector3(0, Float(-length), 0)
+        putterPivot.addChildNode(headRoot)
+
+        let hosel = SCNNode(geometry: SCNCylinder(radius: 0.05, height: 0.32))
+        hosel.geometry?.firstMaterial = chrome
+        hosel.position = SCNVector3(0, 0.05, 0)
+        headRoot.addChildNode(hosel)
+
+        let blade = SCNNode(geometry: SCNBox(width: 0.42, height: 0.36, length: 1.7, chamferRadius: 0.08))
+        let bm = SCNMaterial()
+        bm.lightingModel = .physicallyBased
+        bm.diffuse.contents = UIColor(white: 0.62, alpha: 1)
+        bm.metalness.contents = 0.9
+        bm.roughness.contents = 0.35
+        blade.geometry?.firstMaterial = bm
+        // Heel-shafted: the blade sits toe-out, away from the hands.
+        blade.position = SCNVector3(-0.05, -0.12, 0.62)
+        headRoot.addChildNode(blade)
+
+        let flange = SCNNode(geometry: SCNBox(width: 0.38, height: 0.06, length: 1.6, chamferRadius: 0.02))
+        flange.geometry?.firstMaterial = GolferRig.lit(UIColor(hex: 0x2A2E33), shiny: true)
+        flange.position = SCNVector3(-0.25, -0.27, 0.62)
+        headRoot.addChildNode(flange)
+
+        let sight = SCNNode(geometry: SCNBox(width: 0.32, height: 0.02, length: 0.06, chamferRadius: 0))
+        sight.geometry?.firstMaterial = GolferRig.unlit(.white)
+        sight.position = SCNVector3(-0.05, 0.065, 0.62)
+        headRoot.addChildNode(sight)
+
+        putterPivot.isHidden = true
+        scene.rootNode.addChildNode(putterPivot)
+    }
+
+    /// Stand the putter behind the ball, square to the aim line.
+    private func placePutter(ball spot: CGPoint, aim: CGVector) {
+        let a = SIMD3<Float>(Float(aim.dx), 0, Float(-aim.dy))
+        let up = SIMD3<Float>(0, 1, 0)
+        let right = simd_normalize(simd_cross(a, up))      // screen-right of the aim line
+        let ballW = world(spot, h: 0)
+        let ball = SIMD3<Float>(ballW.x, ballW.y, ballW.z)
+        // Blade centre just behind the ball; hands up and toward the
+        // (invisible) golfer's side, shaft leaning slightly forward.
+        let bladeCentre = ball - a * 0.75 + up * 0.3
+        let hands = bladeCentre - right * 1.25 + up * 3.1 + a * 0.15
+        let heel = bladeCentre - right * 0.62
+        let down = simd_normalize(heel - hands)
+        // Local frame: -Y along the shaft, X toward the target, Z = blade width.
+        let yAxis = -down
+        let xAxis = simd_normalize(a - yAxis * simd_dot(a, yAxis))
+        let zAxis = simd_cross(xAxis, yAxis)
+        putterBase = simd_quatf(simd_float3x3(columns: (xAxis, yAxis, zAxis)))
+        // Rescale so the head lands exactly on the heel point.
+        let length = simd_length(heel - hands)
+        putterPivot.simdScale = SIMD3(1, length / 3.4, 1)
+        putterPivot.simdPosition = hands
+        putterAxis = right
+        putterAngle = 0
+        putterTarget = 0
+        applyPutter()
+    }
+
+    private func applyPutter() {
+        let swing = simd_quatf(angle: putterAngle, axis: putterAxis)
+        putterPivot.simdOrientation = swing * putterBase
+    }
+
     // MARK: - Golfer
 
     func setCharacter(_ name: String) {
@@ -770,11 +986,12 @@ final class Course3DScene: NSObject {
         guard let amount else {
             fingerDriven = false
             golfer.resetToAddress()
+            putterTarget = 0
             return
         }
         fingerDriven = true
         switch kind {
-        case .putt: golfer.setBackswing(Float(amount), putting: true)
+        case .putt: putterTarget = -Float(amount) * 0.55
         case .chip: golfer.setBackswing(Float(amount) * 0.6)
         case .meter: golfer.setBackswing(Float(amount))
         }
@@ -787,6 +1004,15 @@ final class Course3DScene: NSObject {
                       impact: @escaping () -> Void) {
         fingerDriven = false
         let putting = kind == .putt
+        if putting {
+            // Pendulum: back through square at impact, a follow-through
+            // matching the stroke, then settle.
+            putterTarget = 0
+            schedule(after: 0.11) { impact() }
+            schedule(after: 0.12) { [weak self] in self?.putterTarget = 0.3 + 0.45 * Float(power) }
+            schedule(after: 1.2) { [weak self] in self?.putterTarget = 0 }
+            return
+        }
         let finish: Float
         switch kind {
         case .putt: finish = 1
@@ -845,9 +1071,11 @@ final class Course3DScene: NSObject {
         case .chip: golfer.setClub(.iron)
         case .meter(let club): golfer.setClub(club == .driver || club == .wood3 ? .wood : .iron)
         }
-        golfer.node.isHidden = false
+        golfer.node.isHidden = putting
+        putterPivot.isHidden = !putting
         golfer.place(ballWorld: world(spot, h: 0),
                      aim: SIMD3(Float(aimU.dx), 0, Float(-aimU.dy)))
+        if putting { placePutter(ball: spot, aim: aimU) }
 
         let back: CGFloat, height: CGFloat, ahead: CGFloat, lookH: CGFloat
         switch kind {
@@ -857,7 +1085,7 @@ final class Course3DScene: NSObject {
         }
         // Camera behind the ball, nudged right so the golfer sits left of
         // centre and the target line runs up the middle.
-        let side: CGFloat = putting ? 1.8 : 3.5
+        let side: CGFloat = putting ? 0 : 3.5
         let lift: CGFloat, reach: CGFloat
         switch kind {
         case .putt: (lift, reach) = (26, 14)
@@ -1205,6 +1433,11 @@ final class Course3DScene: NSObject {
         }
 
         golfer.update(dt: Float(dt), snap: fingerDriven ? 34 : 0)
+        if !putterPivot.isHidden {
+            let rate: Float = fingerDriven ? 30 : 22
+            putterAngle += (putterTarget - putterAngle) * (1 - exp(-rate * Float(dt)))
+            applyPutter()
+        }
 
         if var pb = playback {
             let finished = advance(&pb, dt: dt)
